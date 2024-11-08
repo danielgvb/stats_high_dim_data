@@ -50,6 +50,28 @@ na_counts <- colSums(is.na(data))
 print(na_counts)
 # No null values
 
+# Train test split---------------------
+install.packages("caTools")
+library(caTools)
+
+# Store the original dataframe in a new object
+original_data <- data
+
+# Set a seed for reproducibility
+set.seed(123)
+
+# Create a train-test split (70% train, 30% test)
+split <- sample.split(data$default_90, SplitRatio = 0.7)
+
+# Split the data into train and test sets
+data <- subset(data, split == TRUE)      # Training set (70%)
+test_data <- subset(original_data, split == FALSE)  # Test set (30%)
+
+# Print the number of rows in each set to verify
+cat("Number of rows in training set:", nrow(data), "\n")
+cat("Number of rows in test set:", nrow(test_data), "\n")
+
+
 
 # EDA------------
 library(skimr)
@@ -247,7 +269,7 @@ ggplot(chi2_results_df, aes(x = reorder(Variable, -P_value), y = P_value)) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 # Findings:
-# city_born, civil_status, date_limit, status show evidence of impacting 
+# city_born, agency,civil_status, date_limit, status show evidence of impacting 
 # the default_90 target variable
 
 # Variables Transformation-------------
