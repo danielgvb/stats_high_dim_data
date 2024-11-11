@@ -1,0 +1,7 @@
+Arreglos
+
+Cols de fechas, solo como numero, dejar como cat las de mes
+revisar los datos con valores atípicos en las col $
+agregar variables exógenas.
+
+agregar interacciones entre variables

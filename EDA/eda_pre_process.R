@@ -4,6 +4,7 @@
 library(readxl)
 data <- read_excel("C:/Users/danie/Documents/GitHub/stats_high_dim_data/data/data.xlsx")
 
+# Incluir variables exogenas : inflacion, tasa interes, dolar, crecimiento economico....
 
 # Remove ids-------
 colnames(data)
@@ -32,6 +33,7 @@ friendly_names <- c("agency", "status", "rating", "work", "age", "civil_status",
                     "contributions_balance", "credit_limit", "capital_balance",
                     "capital_due30", "days_due", "date_approval",
                     "installment", "periodicity","credit_duration", "date_limit",
+                    "dtf_approval_date", "fx_approval_date",
                     "default_90")
 
 # Check that the number of new names matches the number of columns
@@ -52,7 +54,76 @@ print(na_counts)
 
 # Variables Transformation-------------
 
+# Create new variables
+# % of credit already payed
+data$pct_payed <- data$contributions_balance / data$credit_limit 
+hist(data$pct_payed)
+
+
+
+# Subset the data frame for credit limit above 50.000
+subset_data <- data[data$credit_limit > 50000, ]
+hist(subset_data$credit_limit, breaks = 30)
+min(subset_data$credit_limit)
+nrow(subset_data)
+mean(subset_data$default_90)
+
+# Assuming `data` is your data frame and `var` is the variable name as a string
+library(ggplot2)
+var <- "pct_payed"
+
+# Create a CDF plot using ggplot2
+ggplot(data, aes_string(x = var)) +
+  stat_ecdf(geom = "step") +
+  labs(title = paste("CDF Plot of", var),
+       x = var,
+       y = "Cumulative Probability") +
+  theme_minimal()
+
+
+# Transform periodicity into numeric
+library(dplyr)
+
+
+# Mapping the values
+data <- data %>%
+  mutate(periodicity_num = case_when(
+    periodicity == "Mensual" ~ 30,
+    periodicity == "Bimensual" ~ 60,
+    periodicity == "Quincenal" ~ 15,
+    TRUE ~ NA_real_  # Fallback for any unexpected values
+  ))
+
+
+
+
+# Mapp educ level
+data <- data %>%
+  mutate(max_education = case_when(
+    max_education == "secundaria" ~ 2,
+    max_education == "técnico" ~ 3,
+    max_education == "tecnólogo" ~ 4,
+    max_education == "Universitario" ~ 5,
+    max_education == "Posgrado" ~ 6,
+    max_education == "primaria" ~ 1,
+    TRUE ~ NA_real_  # Fallback for any unexpected values
+  ))
+
+# drop periodicity in chr
+
+data <- data %>%
+  select(-periodicity)
+
+
+
+# Create new var
+# cuota / periodicidad
+
+data$installment_periodic <- data$installment / data$periodicity_num
+
+hist(data$installment_periodic)
 ## Transform dates----------
+
 # First create year, month, day, weekday
 
 # Extract features from the date-time variables
@@ -68,9 +139,19 @@ data$m_date_limit <- format(data$date_limit, "%m")
 data$d_date_limit <- format(data$date_limit, "%d")
 data$wd_date_limit <- weekdays(data$date_limit)
 
+
+# Convert POSIXct to numeric (number of seconds since 1970-01-01)
+# as numeric
+data$date_approval <- as.numeric(data$date_approval)
+data$date_limit <- as.numeric(data$date_limit)
+
+
+
 # Calculate the time difference between the two POSIXct variables (in days, hours, etc.)
 data$time_difference_days <- as.numeric(difftime(data$date_limit, data$date_approval, units = "days"))
 
+hist(data$time_difference_days)
+mean(data$time_difference_days)
 
 
 ## Character to factor-------------
@@ -88,9 +169,11 @@ set.seed(123)
 # Create a train-test split (70% train, 30% test)
 split <- sample.split(data$default_90, SplitRatio = 0.7)
 
+
 # Split the data into train and test sets
 train_data <- subset(data, split == TRUE)      # Training set (70%)
 test_data <- subset(data, split == FALSE)  # Test set (30%)
+
 
 # Print the number of rows in each set to verify
 cat("Number of rows in training set:", nrow(train_data), "\n")
