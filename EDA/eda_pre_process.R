@@ -128,16 +128,16 @@ hist(data$installment_periodic)
 
 # Extract features from the date-time variables
 # date approval
-data$y_date_approval <- format(data$date_approval, "%Y")
+#data$y_date_approval <- format(data$date_approval, "%Y")
 data$m_date_approval <- format(data$date_approval, "%m")
-data$d_date_approval <- format(data$date_approval, "%d")
-data$wd_date_approval <- weekdays(data$date_approval)
+#data$d_date_approval <- format(data$date_approval, "%d")
+#data$wd_date_approval <- weekdays(data$date_approval)
 
 # date limit
-data$y_date_limit <- format(data$date_limit, "%Y")
+#data$y_date_limit <- format(data$date_limit, "%Y")
 data$m_date_limit <- format(data$date_limit, "%m")
-data$d_date_limit <- format(data$date_limit, "%d")
-data$wd_date_limit <- weekdays(data$date_limit)
+#data$d_date_limit <- format(data$date_limit, "%d")
+#data$wd_date_limit <- weekdays(data$date_limit)
 
 
 # Convert POSIXct to numeric (number of seconds since 1970-01-01)
@@ -158,6 +158,8 @@ mean(data$time_difference_days)
 # Convert all character columns to factors
 data[] <- lapply(data, function(x) if (is.character(x)) as.factor(x) else x)
 
+
+data <- data[, c(setdiff(names(data), "default_90"), "default_90")]
 
 # Train test split---------------------
 #install.packages("caTools")
@@ -382,6 +384,39 @@ ggplot(chi2_results_df, aes(x = reorder(Variable, -P_value), y = P_value)) +
 model_base <- glm(default_90 ~ ., data = train_data, family = binomial)
 plot(model_base)
 summary(model_base)
+
+
+# Subset regression-----------------
+subset_model <- glm(default_90 ~ ., 
+             data = train_data, 
+             family = binomial, 
+             subset = (age > 25))
+summary(subset_model)
+
+
+# Stepwise regression------------
+## Backward model--------------
+# Fit the full model (all predictors)
+full_model <- glm(default_90 ~ ., data = train_data, family = binomial)
+
+# Perform backward stepwise selection
+b_stepwise_model <- step(full_model, direction = "backward")
+
+# View the summary of the selected model
+summary(b_stepwise_model)
+
+## Forward Model----------
+# Fit the null model (no predictors)
+null_model <- glm(default_90 ~ 1, data = train_data, family = binomial)
+
+# Fit the full model for scope (all predictors)
+full_model <- glm(default_90 ~ ., data = train_data, family = binomial)
+
+# Perform forward stepwise selection
+f_stepwise_model <- step(null_model, scope = list(lower = null_model, upper = full_model), direction = "forward")
+
+# View the summary of the selected model
+summary(f_stepwise_model)
 
 # the model is clearly misspecified, residuals are not normal and 
 
