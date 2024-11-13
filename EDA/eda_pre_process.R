@@ -4,7 +4,6 @@
 library(readxl)
 data <- read_excel("C:/Users/danie/Documents/GitHub/stats_high_dim_data/data/data.xlsx")
 
-# Incluir variables exogenas : inflacion, tasa interes, dolar, crecimiento economico....
 
 # Remove ids-------
 colnames(data)
@@ -55,30 +54,66 @@ print(na_counts)
 # Variables Transformation-------------
 
 # Create new variables
+
 # % of credit already payed
-data$pct_payed <- data$contributions_balance / data$credit_limit 
-hist(data$pct_payed)
+#data$contributions_limit <- data$contributions_balance / data$credit_limit
+#data$capital_limit <- data$capital_balance / data$credit_limit
+#data$installment_limit <- data$installment / data$credit_limit
+#data$installment_contributions <- data$installment / data$contributions_balance
+#data$installment_capital <- data$installment / data$capital_balance
 
 
 
 # Subset the data frame for credit limit above 50.000
+# credits below 50.000 seem odd (is like 12 EUR)
+
 subset_data <- data[data$credit_limit > 50000, ]
-hist(subset_data$credit_limit, breaks = 30)
-min(subset_data$credit_limit)
+
+# see dimension of subset data
 nrow(subset_data)
 mean(subset_data$default_90)
 
-# Assuming `data` is your data frame and `var` is the variable name as a string
-library(ggplot2)
-var <- "pct_payed"
+# Use subset data because is more sense:
+data <- subset_data
 
-# Create a CDF plot using ggplot2
-ggplot(data, aes_string(x = var)) +
-  stat_ecdf(geom = "step") +
-  labs(title = paste("CDF Plot of", var),
-       x = var,
-       y = "Cumulative Probability") +
-  theme_minimal()
+# Some plots of the created variables to see if they are useful
+# library(ggplot2)
+# ggplot(subset_data, aes(x = factor(default_90), y = contributions_limit)) +
+#   geom_boxplot(fill = "lightblue") +
+#   labs(title = "Box Plot of Contributions / credit Limit by Target",
+#        x = "Target",
+#        y = "Contributions Limit") +
+#   theme_minimal()
+# 
+# ggplot(subset_data, aes(x = factor(default_90), y = capital_limit)) +
+#   geom_boxplot(fill = "lightblue") +
+#   labs(title = "Box Plot of Capital / credit Limit by Target",
+#        x = "Target",
+#        y = "Capital balance / Credit Limit") +
+#   theme_minimal()
+# 
+# ggplot(subset_data, aes(x = factor(default_90), y = installment_limit)) +
+#   geom_boxplot(fill = "lightblue") +
+#   labs(title = "Box Plot of Intallment / credit Limit by Target",
+#        x = "Target",
+#        y = "Installment / credit Limit") +
+#   theme_minimal()
+
+
+
+
+
+# Assuming `data` is your data frame and `var` is the variable name as a string
+# library(ggplot2)
+# var <- "pct_payed"
+# 
+# # Create a CDF plot using ggplot2
+# ggplot(subset_data, aes_string(x = var)) +
+#   stat_ecdf(geom = "step") +
+#   labs(title = paste("CDF Plot of", var),
+#        x = var,
+#        y = "Cumulative Probability") +
+#   theme_minimal()
 
 
 # Transform periodicity into numeric
@@ -374,8 +409,7 @@ ggplot(chi2_results_df, aes(x = reorder(Variable, -P_value), y = P_value)) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 # Findings:
-# city_born, agency,civil_status, date_limit, status show evidence of impacting 
-# year of approval, wd_limit, d_date limit
+# city_born, agency,civil_status, show evidence of impacting 
 # the default_90 target variable
 
 # Model----------------
@@ -405,6 +439,7 @@ b_stepwise_model <- step(full_model, direction = "backward")
 # View the summary of the selected model
 summary(b_stepwise_model)
 
+
 ## Forward Model----------
 # Fit the null model (no predictors)
 null_model <- glm(default_90 ~ 1, data = train_data, family = binomial)
@@ -420,7 +455,7 @@ summary(f_stepwise_model)
 
 # the model is clearly misspecified, residuals are not normal and 
 
-# Glmnet
+# Glmnet-----------------------
 # Load necessary package
 library(glmnet)
 
@@ -443,13 +478,84 @@ test.y <- as.numeric(test_data$default_90)  # Ensure it's in numeric format (0 a
 model1 <- glmnet(train.x, train.y, family = "binomial", standardize = T) # Data has different scales, so stand = True
 plot(model1)
 
-# run with cross validation
-cv.model1 <- cv.glmnet(train.x, train.y, standardize = T, family = "binomial")
-plot(cv.model1)
 
-# See lambdas
-cv.model1$lambda.min
-cv.model1$lambda.1se
+# CV
+# Perform cross-validation
+set.seed(123)  # For reproducibility
+cv_model1 <- cv.glmnet(train.x, train.y, family = "binomial", standardize = TRUE)
+
+# Optimal Lambda
+# Extract optimal lambda values
+optimal_lambda1 <- cv_model1$lambda.min
+lambda_1se1 <- cv_model1$lambda.1se
+
+# Print the optimal lambda
+print(paste("Optimal lambda (lambda.min):", optimal_lambda1))
+print(paste("Optimal lambda (lambda.1se):", lambda_1se1))
+
+# Plot the cross-validation curve
+plot(cv_model1)
+
+# Add labels for lambda.min and lambda.1se
+abline(v = log(c(optimal_lambda1, lambda_1se1)), col = c("blue", "red"), lty = 2)
+legend("topright", legend = c("lambda.min", "lambda.1se"), col = c("blue", "red"), lty = 2)
+
+
+# Plot coefficient paths
+plot(cv_model1$glmnet.fit, xvar = "lambda", label = TRUE)
+
+
+
+# Extract coefficients at lambda.min
+optimal_coefficients1 <- coef(cv_model1, s = "lambda.min")
+
+# Convert to a readable format
+coef_df1 <- as.data.frame(as.matrix(optimal_coefficients1))
+coef_df1$Variable <- rownames(coef_df1)
+rownames(coef_df1) <- NULL
+colnames(coef_df1)[1] <- "Coefficient"
+
+# Display non-zero coefficients
+non_zero_coefs1 <- coef_df1[coef_df1$Coefficient != 0, ]
+print(non_zero_coefs1)
+
+
+# Predict probabilities
+predicted_probabilities1 <- predict(cv_model1, newx = test.x, s = "lambda.min", type = "response")
+
+# Predict class labels based on a threshold (e.g., 0.5)
+predicted_classes1 <- ifelse(predicted_probabilities1 > 0.5, 1, 0)
+
+# Evaluate model performance
+
+#install.packages("caret")
+library(caret)
+
+# Create a confusion matrix
+conf_matrix1 <- confusionMatrix(factor(predicted_classes1), factor(test.y))
+
+# Print the confusion matrix and performance metrics
+print(conf_matrix1)
+
+# ROC Curve
+
+# Load pROC package for ROC analysis
+#install.packages("pROC")
+library(pROC)
+
+# Compute ROC curve
+roc_obj1 <- roc(test.y, as.numeric(predicted_probabilities1))
+
+# Plot ROC curve
+plot(roc_obj1, col = "blue", main = "ROC Curve")
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+# Calculate AUC
+auc_value1 <- auc(roc_obj1)
+print(paste("AUC:", auc_value1))
+
+
+
 
 # measure = class 
 cv.model_c <- cv.glmnet(train.x, train.y, family = "binomial", type.measure = "class")
@@ -459,18 +565,27 @@ plot(cv.model_c)
 cv.model_auc <- cv.glmnet(train.x, train.y, family = "binomial", type.measure = "auc")
 plot(cv.model_auc)
 
-# coefficients
-coef.est <- as.matrix(coef(model1, s=cv.model1$lambda.min)) # change fit for model1
-length(coef.est)
-# coefficients different from 0
-coef.vec <- subset(coef.est, coef.est != 0)
-coef.vec
+# Group Lasso--------------
+library(gglasso)
+# grp <-  # create groups
+  
+  
 
-# prediction
+fit_gglasso <- gglasso(x = X, y = y, group = grp, loss = "logit")
 
-tpred.log <- predict(model1, test.x, s=cv.model1$lambda.min, type ="class") # type = "class" pred 0/1
-str(tpred.log)
-
-table(tpred.log, test.y)
-err.log <- 1-sum(diag(table(tpred.log, test.y)))/NROW(test.y)
-err.log
+##Cross Validation
+#
+#enlarge on the left to get the minimum
+set.seed(333)
+fit.cv_gglasso =cv.gglasso(x=X,y=Y,group=grp, loss = 'logit',nfolds=10, lambda.factor=0.0001)
+plot(fit.cv)
+#
+#Pick the best Lambda
+#enlarge fitting on the left to get minimum
+fit_gglasso <- gglasso(x=X, y=Y, group=grp, loss='logit',lambda.factor=0.0001)
+lmbda <- fit.cv$lambda.1se
+lmbda1 <- fit.cv$lambda.min
+#
+coefs=coef(object=fit,s=lmbda)
+coefs1=coef(object=fit,s=lmbda1)
+#
