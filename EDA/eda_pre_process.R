@@ -412,6 +412,10 @@ ggplot(chi2_results_df, aes(x = reorder(Variable, -P_value), y = P_value)) +
 # city_born, agency,civil_status, show evidence of impacting 
 # the default_90 target variable
 
+# Groups for group lasso
+
+head(train_data)
+
 # Model----------------
 ## Logistic regression-------------------
 # Basic logistic regression
@@ -566,12 +570,141 @@ cv.model_auc <- cv.glmnet(train.x, train.y, family = "binomial", type.measure = 
 plot(cv.model_auc)
 
 # Group Lasso--------------
-library(gglasso)
-# grp <-  # create groups
-  
-  
 
-fit_gglasso <- gglasso(x = X, y = y, group = grp, loss = "logit")
+# acommodate the data for group lasso
+
+# Create an empty list to store the dummy variables and initialize the group vector
+# Initialize an empty list to store the dummy variables and the group vector
+##### Train-------------
+# Remove the target variable `default_90` from train_data for group creation
+train_data_no_target <- train_data[, !colnames(train_data) %in% "default_90"]
+
+# Create an empty list to store the dummy variables and initialize the group vector
+dummy_list_train <- list()
+group_vector_train <- c()  # This will store group identifiers for each column
+
+# Initialize a group ID counter
+group_id <- 1
+
+# Select numeric columns from train_data without the target variable
+numeric_data_train <- train_data_no_target[sapply(train_data_no_target, is.numeric)]
+
+# Assign the first group ID to all numeric columns
+group_vector_train <- c(group_vector_train, rep(group_id, ncol(numeric_data_train)))
+
+# Increment the group ID for the next set of variables
+group_id <- group_id + 1
+
+# Select only non-numeric (categorical) columns, excluding the target variable
+non_numeric_data <- train_data_no_target[, !sapply(train_data_no_target, is.numeric)]
+
+# Loop over each column name in non_numeric_data
+for (col_name in colnames(non_numeric_data)) {
+  # Dynamically create dummy variables, dropping the first level
+  print(col_name)
+  dummies <- model.matrix(as.formula(paste("~", col_name)), data = train_data_no_target)[, -1]
+  
+  # Check if dummies has at least one column
+  if (!is.null(ncol(dummies)) && ncol(dummies) > 0) {
+    # Store the dummies in the list with the column name as the key
+    dummy_list_train[[col_name]] <- dummies
+    
+    # Add group markers for the current set of dummy variables
+    group_vector_train <- c(group_vector_train, rep(group_id, ncol(dummies)))
+    
+    # Increment the group ID for the next factor
+    group_id <- group_id + 1
+  } else {
+    # If dummies has zero columns, skip this factor variable or handle it as needed
+    warning(paste("No dummy variables created for", col_name, "as it has only one level in all rows."))
+  }
+}
+
+# Combine all dummy matrices into one data frame or matrix
+dummy_data_train <- do.call(cbind, dummy_list_train)
+
+# Combine numeric data and dummy data into a single data frame
+combined_data_train <- cbind(numeric_data_train, dummy_data_train)
+
+
+##### Test---------
+
+# Remove the target variable `default_90` from test_data for group creation
+test_data_no_target <- test_data[, !colnames(test_data) %in% "default_90"]
+
+# Create an empty list to store the dummy variables and initialize the group vector
+dummy_list_test <- list()
+group_vector_test <- c()  # This will store group identifiers for each column
+
+# Initialize a group ID counter
+group_id <- 1
+
+# Select numeric columns from test_data without the target variable
+numeric_data_test <- test_data_no_target[sapply(test_data_no_target, is.numeric)]
+
+# Assign the first group ID to all numeric columns
+group_vector_test <- c(group_vector_test, rep(group_id, ncol(numeric_data_test)))
+
+# Increment the group ID for the next set of variables
+group_id <- group_id + 1
+
+# Select only non-numeric (categorical) columns, excluding the target variable
+non_numeric_data <- test_data_no_target[, !sapply(test_data_no_target, is.numeric)]
+
+# Loop over each column name in non_numeric_data
+for (col_name in colnames(non_numeric_data)) {
+  # Dynamically create dummy variables, dropping the first level
+  print(col_name)
+  dummies <- model.matrix(as.formula(paste("~", col_name)), data = test_data_no_target)[, -1]
+  
+  # Check if dummies has at least one column
+  if (!is.null(ncol(dummies)) && ncol(dummies) > 0) {
+    # Store the dummies in the list with the column name as the key
+    dummy_list_test[[col_name]] <- dummies
+    
+    # Add group markers for the current set of dummy variables
+    group_vector_test <- c(group_vector_test, rep(group_id, ncol(dummies)))
+    
+    # Increment the group ID for the next factor
+    group_id <- group_id + 1
+  } else {
+    # If dummies has zero columns, skip this factor variable or handle it as needed
+    warning(paste("No dummy variables created for", col_name, "as it has only one level in all rows."))
+  }
+}
+
+# Combine all dummy matrices into one data frame or matrix
+dummy_data_test <- do.call(cbind, dummy_list_test)
+
+# Combine numeric data and dummy data into a single data frame
+combined_data_test <- cbind(numeric_data_test, dummy_data_test)
+
+
+# Group Lasso model
+
+library(gglasso)
+
+# Separate the target variable `default_90` from `combined_data_train`
+# Separate the target variable `default_90` from combined_data_train
+y_train <- as.numeric(train_data$default_90)  # Extract target variable as numeric vector
+
+# Adjust y_train to be in {-1, 1} format for binary classification
+y_train <- ifelse(y_train == 1, 1, -1)  # Assuming `1` means the positive class and `0` the negative
+
+# Remove `default_90` from combined_data_train to get only predictors
+X_train <- as.matrix(combined_data_train)  # Convert predictors to a matrix
+
+# Ensure grp matches the predictor matrix X_train
+grp_train <- group_vector_train  # This assumes group_vector_train is aligned with the predictor columns
+
+# Fit the gglasso model
+fit_gglasso_train <- gglasso(x = X_train, y = y_train, group = grp_train, loss = "logit")
+
+# Inspect the model
+print(fit_gglasso_train)
+
+
+
 
 ##Cross Validation
 #
