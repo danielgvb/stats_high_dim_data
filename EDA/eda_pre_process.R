@@ -164,13 +164,13 @@ hist(data$installment_periodic)
 # Extract features from the date-time variables
 # date approval
 #data$y_date_approval <- format(data$date_approval, "%Y")
-data$m_date_approval <- format(data$date_approval, "%m")
+#data$m_date_approval <- format(data$date_approval, "%m")
 #data$d_date_approval <- format(data$date_approval, "%d")
 #data$wd_date_approval <- weekdays(data$date_approval)
 
 # date limit
 #data$y_date_limit <- format(data$date_limit, "%Y")
-data$m_date_limit <- format(data$date_limit, "%m")
+#data$m_date_limit <- format(data$date_limit, "%m")
 #data$d_date_limit <- format(data$date_limit, "%d")
 #data$wd_date_limit <- weekdays(data$date_limit)
 
@@ -188,9 +188,12 @@ data$time_difference_days <- as.numeric(difftime(data$date_limit, data$date_appr
 hist(data$time_difference_days)
 mean(data$time_difference_days)
 
+## Transform numeric money to logarithm---------------
+
 
 ## Character to factor-------------
 # Convert all character columns to factors
+
 data[] <- lapply(data, function(x) if (is.character(x)) as.factor(x) else x)
 
 
@@ -393,6 +396,7 @@ for (col_name in colnames(non_numeric_data)) {
   p_values <- c(p_values, chi2_result$p.value)
 }
 
+contingency_table
 # Create a data frame for plotting
 chi2_results_df <- data.frame(
   Variable = colnames(non_numeric_data),
@@ -420,6 +424,7 @@ head(train_data)
 ## Logistic regression-------------------
 # Basic logistic regression
 model_base <- glm(default_90 ~ ., data = train_data, family = binomial)
+par(mfrow = c(2, 2))
 plot(model_base)
 summary(model_base)
 
@@ -428,9 +433,9 @@ summary(model_base)
 subset_model <- glm(default_90 ~ ., 
              data = train_data, 
              family = binomial, 
-             subset = (age > 25))
+             subset = (age > 25),  control = glm.control(maxit = 150))
 summary(subset_model)
-
+# does not converge
 
 # Stepwise regression------------
 ## Backward model--------------
@@ -460,14 +465,20 @@ summary(f_stepwise_model)
 # the model is clearly misspecified, residuals are not normal and 
 
 # Glmnet-----------------------
+# remove age to experiment
+#train_data <- train_data[, !names(train_data) %in% c("age")]
+#test_data <- test_data[, !names(test_data) %in% c("age")]
+
 # Load necessary package
 library(glmnet)
 
 # Prepare training data matrix (assuming data is the training set)
 train.x <- model.matrix(default_90 ~ . - 1, data = train_data)  # -1 removes the intercept column to avoid duplication
 
+
 # Prepare target variable
 train.y <- as.numeric(train_data$default_90)  # Ensure it's in numeric format (0 and 1) for glmnet
+
 
 
 # Prepare training data matrix (assuming data is the training set)
@@ -479,6 +490,7 @@ test.y <- as.numeric(test_data$default_90)  # Ensure it's in numeric format (0 a
 
 
 # Run the glmnet model
+# Lasso bc alpha = 1 by default, If we want we can do elastic net by setting a = 0.5
 model1 <- glmnet(train.x, train.y, family = "binomial", standardize = T) # Data has different scales, so stand = True
 plot(model1)
 
@@ -541,6 +553,16 @@ conf_matrix1 <- confusionMatrix(factor(predicted_classes1), factor(test.y))
 # Print the confusion matrix and performance metrics
 print(conf_matrix1)
 
+# F1 score
+# Precision and Recall
+precision <- conf_matrix1$byClass["Pos Pred Value"]  # Positive Predictive Value (Precision)
+recall <- conf_matrix1$byClass["Sensitivity"]        # Sensitivity (Recall)
+
+# Calculate F1 Score
+f1_score <- 2 * (precision * recall) / (precision + recall)
+print(f1_score)
+
+
 # ROC Curve
 
 # Load pROC package for ROC analysis
@@ -569,8 +591,11 @@ plot(cv.model_c)
 cv.model_auc <- cv.glmnet(train.x, train.y, family = "binomial", type.measure = "auc")
 plot(cv.model_auc)
 
-# Group Lasso--------------
+## Second order lasso----------------
+## Elastic net-----------------------
 
+
+# Group Lasso--------------
 # acommodate the data for group lasso
 
 # Create an empty list to store the dummy variables and initialize the group vector
