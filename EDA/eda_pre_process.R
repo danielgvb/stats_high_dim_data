@@ -722,8 +722,64 @@ X_train <- as.matrix(combined_data_train)  # Convert predictors to a matrix
 # Ensure grp matches the predictor matrix X_train
 grp_train <- group_vector_train  # This assumes group_vector_train is aligned with the predictor columns
 
+
+
+# tips for speed
+
+# paralel computing
+# library(doParallel)
+# 
+# # Set up parallel backend
+# cl <- makeCluster(detectCores() - 1)  # Use all but one core
+# registerDoParallel(cl)
+# 
+# # Run gglasso
+# fit_gglasso_train <- gglasso(x = X_train, y = y_train, group = grp_train, loss = "logit")
+# 
+# # Stop the parallel backend
+# stopCluster(cl)
+
+# standard data
+# Standardize predictors
+X_train_scaled <- scale(X_train)
+
+# Fit model with standardized data
+fit_gglasso_train <- gglasso(x = X_train_scaled, y = y_train, group = grp_train,
+                             loss = "logit", standardize = FALSE,
+                             nlambda = 50, lambda.min.ratio = 0.1,thresh = 1e-3)
+
+
+fit_gglasso_train <- gglasso(
+  x = X_train_scaled,        # Matrix of predictors (standardized manually)
+  y = y_train,               # Response variable (binary for "logit" loss)
+  group = grp_train,         # Grouping of predictors for group lasso
+  loss = "logit",            # Logistic regression (binary classification)
+  standardize = FALSE,       # Data already standardized, skip internal standardization
+  nlambda = 50,              # Use 50 lambda values instead of the default 100
+  lambda.min.ratio = 0.1,    # Minimum lambda is 10% of the max lambda
+  thresh = 1e-3              # Convergence tolerance (less stringent than default 1e-7)
+)
+
+
+
+# sparse matrices
+library(Matrix)
+
+# Convert to sparse matrix
+X_train_sparse <- as(X_train, "sparseMatrix")
+
+# Fit gglasso with sparse matrix
+fit_gglasso_train <- gglasso(x = X_train_sparse, y = y_train, group = grp_train, loss = "logit")
+
+
+
 # Fit the gglasso model
-fit_gglasso_train <- gglasso(x = X_train, y = y_train, group = grp_train, loss = "logit")
+fit_gglasso_train <- gglasso(x = X_train, y = y_train, group = grp_train, loss = "logit",
+                             nlambda = 50, lambda.min.ratio = 0.1,thresh = 1e-3)
+# standard nlambda = 100, sun with 25 to take less time
+
+# plot results
+plot(fit_gglasso_train)
 
 # Inspect the model
 print(fit_gglasso_train)
