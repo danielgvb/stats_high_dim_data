@@ -4,6 +4,8 @@
 library(readxl)
 data <- read_excel("C:/Users/danie/Documents/GitHub/stats_high_dim_data/data/data.xlsx")
 
+# 16 December
+# 20 min presentation and 10 of discussion
 
 # Remove ids-------
 colnames(data)
@@ -188,7 +190,7 @@ data$time_difference_days <- as.numeric(difftime(data$date_limit, data$date_appr
 hist(data$time_difference_days)
 mean(data$time_difference_days)
 
-## Transform numeric money to logarithm---------------
+
 
 
 ## Character to factor-------------
@@ -238,6 +240,26 @@ for (col_name in colnames(numeric_data)) {
   hist(numeric_data[[col_name]], main = paste("Histogram of", col_name),
        xlab = col_name, col = "lightblue", border = "black")
 }
+
+### Transform numeric to logarithm---------------
+
+# Exclude the specified columns
+exclude_columns <- c("default_90", "dtf_approval_date")
+
+# Apply log transformation to numeric variables, excluding the specified columns
+train_data <- train_data %>%
+  mutate(across(
+    where(is.numeric) & !all_of(exclude_columns), 
+    ~ log(. + 1)  # Add 1 to avoid issues with log(0)
+  ))
+
+test_data <- test_data %>%
+  mutate(across(
+    where(is.numeric) & !all_of(exclude_columns), 
+    ~ log(. + 1)
+  ))
+
+
 ### Correlation----------
 # Correlation of Numeric Values:
 # Calculate the correlation matrix
@@ -426,16 +448,59 @@ head(train_data)
 model_base <- glm(default_90 ~ ., data = train_data, family = binomial)
 par(mfrow = c(2, 2))
 plot(model_base)
+
+#Observations:
+
+
+# Improvement: Consider adding interaction terms or non-linear terms
+# (e.g., quadratic or polynomial terms) to better model the relationship.
+
+# While logistic regression does not assume normality of residuals, 
+# extreme deviations may indicate influential observations or outliers 
+# that could affect the model fit. Investigate these points (e.g., rows 3183, 2030, and 3087).
 summary(model_base)
 
+### Metrics-----------
+# prediction
 
-# Subset regression-----------------
-subset_model <- glm(default_90 ~ ., 
-             data = train_data, 
-             family = binomial, 
-             subset = (age > 25),  control = glm.control(maxit = 150))
-summary(subset_model)
-# does not converge
+# Load required library
+library(caret)
+
+# Define the function
+evaluate_model <- function(model, test_data, target_col, threshold = 0.5) {
+  # Predict probabilities on the test_data
+  predicted_prob <- predict(model, newdata = test_data, type = "response")
+  
+  # Convert probabilities to binary predictions using the threshold
+  predicted_class <- ifelse(predicted_prob > threshold, 1, 0)
+  
+  # Calculate accuracy
+  accuracy <- mean(predicted_class == test_data[[target_col]])
+  
+  # Create confusion matrix
+  conf_matrix <- confusionMatrix(
+    factor(predicted_class), 
+    factor(test_data[[target_col]])
+  )
+  
+  # Extract Precision, Recall, and F1 Score
+  precision <- conf_matrix$byClass["Pos Pred Value"]
+  recall <- conf_matrix$byClass["Sensitivity"]
+  f1_score <- 2 * (precision * recall) / (precision + recall)
+  
+  # Return a list with accuracy and F1 score
+  return(list(
+    accuracy = round(accuracy, 4),
+    f1_score = round(f1_score, 4)
+  ))
+}
+
+# Run function to evaluate results
+results_base <- evaluate_model(model_base, test_data, target_col = "default_90")
+
+# Print the results
+print(paste("Accuracy:", results_base$accuracy))
+print(paste("F1 Score:", results_base$f1_score))
 
 # Stepwise regression------------
 ## Backward model--------------
@@ -447,6 +512,15 @@ b_stepwise_model <- step(full_model, direction = "backward")
 
 # View the summary of the selected model
 summary(b_stepwise_model)
+
+plot(b_stepwise_model)
+
+
+results_backward <- evaluate_model(b_stepwise_model, test_data, target_col = "default_90")
+
+# Print the results
+print(paste("Accuracy:", results_backward$accuracy))
+print(paste("F1 Score:", results_backward$f1_score))
 
 
 ## Forward Model----------
@@ -463,6 +537,15 @@ f_stepwise_model <- step(null_model, scope = list(lower = null_model, upper = fu
 summary(f_stepwise_model)
 
 # the model is clearly misspecified, residuals are not normal and 
+
+# metrics
+results_forward <- evaluate_model(f_stepwise_model, test_data, target_col = "default_90")
+
+# Print the results
+print(paste("Accuracy:", results_forward$accuracy))
+print(paste("F1 Score:", results_forward$f1_score))
+
+# 
 
 # Glmnet-----------------------
 # remove age to experiment
@@ -491,8 +574,48 @@ test.y <- as.numeric(test_data$default_90)  # Ensure it's in numeric format (0 a
 
 # Run the glmnet model
 # Lasso bc alpha = 1 by default, If we want we can do elastic net by setting a = 0.5
-model1 <- glmnet(train.x, train.y, family = "binomial", standardize = T) # Data has different scales, so stand = True
-plot(model1)
+model_lasso <- glmnet(train.x, train.y, family = "binomial", standardize = T) # Data has different scales, so stand = True
+par(mfrow=c(1,1))
+plot(model_lasso)
+
+
+### Function for model evaluation
+
+evaluate_glmnet_model <- function(model, test_x, test_y, threshold = 0.5) {
+  # Predict probabilities using the glmnet model
+  predicted_prob <- predict(model, newx = test_x, type = "response")[, 1]
+  
+  # Convert probabilities to binary predictions using the threshold
+  predicted_class <- ifelse(predicted_prob > threshold, 1, 0)
+  
+  # Calculate accuracy
+  accuracy <- mean(predicted_class == test_y)
+  
+  # Create confusion matrix
+  conf_matrix <- confusionMatrix(
+    factor(predicted_class), 
+    factor(test_y)
+  )
+  
+  # Extract Precision, Recall, and F1 Score
+  precision <- conf_matrix$byClass["Pos Pred Value"]
+  recall <- conf_matrix$byClass["Sensitivity"]
+  f1_score <- 2 * (precision * recall) / (precision + recall)
+  
+  # Return a list with accuracy and F1 score
+  return(list(
+    accuracy = round(accuracy, 4),
+    f1_score = round(f1_score, 4)
+  ))
+}
+
+
+# Evaluate the Lasso model on the test set
+results_lasso <- evaluate_glmnet_model(model_lasso, test.x, test.y)
+
+# Print the results
+print(paste("Accuracy:", results_lasso$accuracy))
+print(paste("F1 Score:", results_lasso$f1_score))
 
 
 # CV
@@ -518,6 +641,7 @@ legend("topright", legend = c("lambda.min", "lambda.1se"), col = c("blue", "red"
 
 
 # Plot coefficient paths
+#Put names of variables instead of number!!!!!!!!!!!!!--------------
 plot(cv_model1$glmnet.fit, xvar = "lambda", label = TRUE)
 
 
@@ -536,60 +660,60 @@ non_zero_coefs1 <- coef_df1[coef_df1$Coefficient != 0, ]
 print(non_zero_coefs1)
 
 
-# Predict probabilities
-predicted_probabilities1 <- predict(cv_model1, newx = test.x, s = "lambda.min", type = "response")
+## Metrics
 
-# Predict class labels based on a threshold (e.g., 0.5)
-predicted_classes1 <- ifelse(predicted_probabilities1 > 0.5, 1, 0)
+# Evaluate the model at lambda.min
+results_lambda_min <- evaluate_glmnet_model(
+  model = cv_model1$glmnet.fit,  # The actual model inside cv.glmnet
+  test_x = test.x, 
+  test_y = test.y, 
+  threshold = 0.5
+)
 
-# Evaluate model performance
+# Evaluate the model at lambda.1se
+results_lambda_1se <- evaluate_glmnet_model(
+  model = cv_model1$glmnet.fit,
+  test_x = test.x, 
+  test_y = test.y, 
+  threshold = 0.5
+)
 
-#install.packages("caret")
-library(caret)
+# Print the results for lambda.min
+print(paste("Accuracy (lambda.min):", results_lambda_min$accuracy))
+print(paste("F1 Score (lambda.min):", results_lambda_min$f1_score))
 
-# Create a confusion matrix
-conf_matrix1 <- confusionMatrix(factor(predicted_classes1), factor(test.y))
-
-# Print the confusion matrix and performance metrics
-print(conf_matrix1)
-
-# F1 score
-# Precision and Recall
-precision <- conf_matrix1$byClass["Pos Pred Value"]  # Positive Predictive Value (Precision)
-recall <- conf_matrix1$byClass["Sensitivity"]        # Sensitivity (Recall)
-
-# Calculate F1 Score
-f1_score <- 2 * (precision * recall) / (precision + recall)
-print(f1_score)
+# Print the results for lambda.1se
+print(paste("Accuracy (lambda.1se):", results_lambda_1se$accuracy))
+print(paste("F1 Score (lambda.1se):", results_lambda_1se$f1_score))
 
 
 # ROC Curve
 
 # Load pROC package for ROC analysis
 #install.packages("pROC")
-library(pROC)
-
-# Compute ROC curve
-roc_obj1 <- roc(test.y, as.numeric(predicted_probabilities1))
-
-# Plot ROC curve
-plot(roc_obj1, col = "blue", main = "ROC Curve")
-abline(a = 0, b = 1, lty = 2, col = "gray")
-
-# Calculate AUC
-auc_value1 <- auc(roc_obj1)
-print(paste("AUC:", auc_value1))
-
-
-
-
-# measure = class 
-cv.model_c <- cv.glmnet(train.x, train.y, family = "binomial", type.measure = "class")
-plot(cv.model_c)
-
-# measure = AUC
-cv.model_auc <- cv.glmnet(train.x, train.y, family = "binomial", type.measure = "auc")
-plot(cv.model_auc)
+# library(pROC)
+# 
+# # Compute ROC curve
+# roc_obj1 <- roc(test.y, as.numeric(predicted_probabilities1))
+# 
+# # Plot ROC curve
+# plot(roc_obj1, col = "blue", main = "ROC Curve")
+# abline(a = 0, b = 1, lty = 2, col = "gray")
+# 
+# # Calculate AUC
+# auc_value1 <- auc(roc_obj1)
+# print(paste("AUC:", auc_value1))
+# 
+# 
+# 
+# 
+# # measure = class 
+# cv.model_c <- cv.glmnet(train.x, train.y, family = "binomial", type.measure = "class")
+# plot(cv.model_c)
+# 
+# # measure = AUC
+# cv.model_auc <- cv.glmnet(train.x, train.y, family = "binomial", type.measure = "auc")
+# plot(cv.model_auc)
 
 ## Second order lasso----------------
 ## Elastic net-----------------------
@@ -723,6 +847,100 @@ X_train <- as.matrix(combined_data_train)  # Convert predictors to a matrix
 grp_train <- group_vector_train  # This assumes group_vector_train is aligned with the predictor columns
 
 
+###### GLasso----------
+# Ensure the required library is loaded
+library(gglasso)
+library(Matrix)
+
+# Convert to sparse matrix
+X_train_sparse <- as(X_train, "sparseMatrix")
+
+# Convert back to dense matrix (required by gglasso)
+X_train_dense <- as.matrix(X_train_sparse)
+
+# Standardize predictors
+X_train_scaled <- scale(X_train_dense)
+
+install.packages("doParallel")
+library(doParallel)
+
+# Set up parallel backend
+cl <- makeCluster(detectCores() - 1)  # Use all but one core
+registerDoParallel(cl)
+
+
+# See this link for sparse group_lasso
+# https://cran.r-project.org/web/packages/sparsegl/index.html
+
+# Fit the group lasso model
+fit_gglasso_train <- gglasso(
+  x = X_train_scaled, 
+  y = y_train, 
+  group = grp_train, 
+  loss = "logit", 
+  nlambda = 50
+)
+
+# Stop the parallel backend
+stopCluster(cl)
+
+plot(fit_gglasso_train)
+
+
+evaluate_gglasso_model <- function(model, test_x, test_y, lambda, threshold = 0.5) {
+  # Predict probabilities using the gglasso model at a specific lambda
+  predicted_prob <- predict(model, newx = test_x, s = lambda, type = "response")
+  
+  # Convert probabilities to binary predictions using the threshold
+  predicted_class <- ifelse(predicted_prob > threshold, 1, -1)  # Adjust to match {-1, 1} format of `y_train`
+  
+  # Convert test_y to {1, -1} format if needed
+  test_y <- ifelse(test_y == 1, 1, -1)
+  
+  # Calculate accuracy
+  accuracy <- mean(predicted_class == test_y)
+  
+  # Create confusion matrix
+  conf_matrix <- confusionMatrix(
+    factor(predicted_class), 
+    factor(test_y)
+  )
+  
+  # Extract Precision, Recall, and F1 Score
+  precision <- conf_matrix$byClass["Pos Pred Value"]
+  recall <- conf_matrix$byClass["Sensitivity"]
+  f1_score <- 2 * (precision * recall) / (precision + recall)
+  
+  # Return a list with accuracy and F1 score
+  return(list(
+    accuracy = round(accuracy, 4),
+    f1_score = round(f1_score, 4)
+  ))
+}
+
+
+# Convert test set to a matrix
+test_x_dense <- as.matrix(test.x)  # Ensure test.x is in dense format
+
+# Define the lambda to evaluate
+lambda_to_evaluate <- fit_gglasso_train$lambda[10]  # Example: Use the 10th lambda value
+
+# Evaluate the model
+results_gglasso <- evaluate_gglasso_model(
+  model = fit_gglasso_train, 
+  test_x = test_x_dense, 
+  test_y = test.y, 
+  lambda = lambda_to_evaluate
+)
+
+# Print results
+print(paste("Accuracy (lambda):", results_gglasso$accuracy))
+print(paste("F1 Score (lambda):", results_gglasso$f1_score))
+
+
+
+######GLasso----------
+
 
 # tips for speed
 
@@ -749,16 +967,7 @@ fit_gglasso_train <- gglasso(x = X_train_scaled, y = y_train, group = grp_train,
                              nlambda = 50, lambda.min.ratio = 0.1,thresh = 1e-3)
 
 
-fit_gglasso_train <- gglasso(
-  x = X_train_scaled,        # Matrix of predictors (standardized manually)
-  y = y_train,               # Response variable (binary for "logit" loss)
-  group = grp_train,         # Grouping of predictors for group lasso
-  loss = "logit",            # Logistic regression (binary classification)
-  standardize = FALSE,       # Data already standardized, skip internal standardization
-  nlambda = 50,              # Use 50 lambda values instead of the default 100
-  lambda.min.ratio = 0.1,    # Minimum lambda is 10% of the max lambda
-  thresh = 1e-3              # Convergence tolerance (less stringent than default 1e-7)
-)
+
 
 
 

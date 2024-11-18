@@ -1,0 +1,21 @@
+Pendientes:
+
+* Sacar logaritmo de 
+
+* Para cada modelo calcular metrics:
+	* Accuracy
+	* F1
+	*
+
+
+* Hacer modelos:
+	* Logit
+	* FWD and BWD
+	* Logit + Lasso
+	* Elastic Net
+	* Group Lasso - hacerlo on parse matrices
+	* PCA
+	* PCA + Logit
+
+* Hacer para cada modelo post estimation plots
+* Para el mejor modelo hacer plots
