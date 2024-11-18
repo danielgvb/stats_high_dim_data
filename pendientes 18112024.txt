@@ -1,6 +1,6 @@
 Pendientes:
 
-* Sacar logaritmo de 
+* Sacar logaritmo de las numericas ---- OK
 
 * Para cada modelo calcular metrics:
 	* Accuracy
