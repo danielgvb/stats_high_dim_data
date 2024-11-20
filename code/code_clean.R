@@ -985,5 +985,5 @@ accuracy_test <- mean(predicted_class_test == y_test)
 
 cat("Test set accuracy with best lambda:", accuracy_test, "\n")
 
-
+# Add plots and Confussion matrix
 # Add  Group Lasso & PCA with regression similarly in modular functions
