@@ -260,6 +260,146 @@ ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
   labs(title = "Calibration Curve", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
   theme_minimal()
 
+## Stepwise Logistic Regression----------------
+
+library(MASS)  # For stepwise regression functions
+
+### 1. Forward Selection ------------------------
+# Start with an empty model
+start_model <- glm(default_90 ~ 1, data = train_data, family = binomial)
+
+# Define the full model with all predictors
+full_model <- glm(default_90 ~ ., data = train_data, family = binomial)
+
+# Perform forward selection
+forward_model <- step(
+  start_model, 
+  scope = list(lower = start_model, upper = full_model), 
+  direction = "forward", 
+  trace = 0
+)
+
+# Evaluate Forward Selection Model
+forward_results <- evaluate_model(forward_model, test_data, "default_90")
+print(forward_results)
+
+### 2. Backward Elimination ---------------------
+# Start with the full model
+backward_model <- step(
+  full_model, 
+  direction = "backward", 
+  trace = 0
+)
+
+# Evaluate Backward Elimination Model
+backward_results <- evaluate_model(backward_model, test_data, "default_90")
+print(backward_results)
+
+### Post-Estimation Plots for Forward Model ----------------
+# Predicted probabilities
+predicted_prob <- predict(forward_model, newdata = test_data, type = "response")
+
+#### 1. ROC Curve and AUC for Forward Model----------
+roc_curve <- roc(test_data$default_90, predicted_prob)
+auc_value <- auc(roc_curve)
+plot(roc_curve, col = "blue", main = paste("ROC Curve (AUC =", round(auc_value, 2), ")"))
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+#### 2. Confusion Matrix Heatmap for Forward Model---------
+predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
+conf_matrix <- table(Predicted = predicted_class, Actual = test_data$default_90)
+
+ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  geom_text(aes(label = Freq), color = "black") +
+  labs(title = "Confusion Matrix Heatmap (Forward Model)", x = "Actual", y = "Predicted") +
+  theme_minimal()
+
+#### 3. Coefficient Plot for Forward Model--------------
+coef_data <- as.data.frame(summary(forward_model)$coefficients)
+coef_data$Variable <- rownames(coef_data)
+rownames(coef_data) <- NULL
+
+ggplot(coef_data, aes(x = reorder(Variable, Estimate), y = Estimate)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Coefficient Plot (Forward Model)", x = "Variable", y = "Estimate") +
+  theme_minimal()
+
+#### 4. Calibration Curve for Forward Model-------------
+calibration_data <- data.frame(
+  Predicted = predicted_prob,
+  Observed = test_data$default_90
+)
+calibration_data$Bin <- cut(calibration_data$Predicted, breaks = 10, include.lowest = TRUE)
+
+calibration_curve <- calibration_data %>%
+  group_by(Bin) %>%
+  summarize(
+    Mean_Predicted = mean(Predicted),
+    Mean_Observed = mean(Observed)
+  )
+
+ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Calibration Curve (Forward Model)", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
+  theme_minimal()
+
+
+### Post-Estimation Plots for Backward Model ----------------
+
+# Predicted probabilities
+predicted_prob <- predict(backward_model, newdata = test_data, type = "response")
+
+#### 1. ROC Curve and AUC for Backward Model ----------
+roc_curve <- roc(test_data$default_90, predicted_prob)
+auc_value <- auc(roc_curve)
+plot(roc_curve, col = "blue", main = paste("ROC Curve (AUC =", round(auc_value, 2), ")"))
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+#### 2. Confusion Matrix Heatmap for Backward Model ---------
+predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
+conf_matrix <- table(Predicted = predicted_class, Actual = test_data$default_90)
+
+ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  geom_text(aes(label = Freq), color = "black") +
+  labs(title = "Confusion Matrix Heatmap (Backward Model)", x = "Actual", y = "Predicted") +
+  theme_minimal()
+
+#### 3. Coefficient Plot for Backward Model --------------
+coef_data <- as.data.frame(summary(backward_model)$coefficients)
+coef_data$Variable <- rownames(coef_data)
+rownames(coef_data) <- NULL
+
+ggplot(coef_data, aes(x = reorder(Variable, Estimate), y = Estimate)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Coefficient Plot (Backward Model)", x = "Variable", y = "Estimate") +
+  theme_minimal()
+
+#### 4. Calibration Curve for Backward Model -------------
+calibration_data <- data.frame(
+  Predicted = predicted_prob,
+  Observed = test_data$default_90
+)
+calibration_data$Bin <- cut(calibration_data$Predicted, breaks = 10, include.lowest = TRUE)
+
+calibration_curve <- calibration_data %>%
+  group_by(Bin) %>%
+  summarize(
+    Mean_Predicted = mean(Predicted),
+    Mean_Observed = mean(Observed)
+  )
+
+ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Calibration Curve (Backward Model)", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
+  theme_minimal()
 
 ## Lasso Logistic Regression--------------
 
@@ -347,7 +487,7 @@ evaluate_lasso <- function(predicted_class, predicted_prob, y_test) {
 lasso_results <- evaluate_lasso(predicted_class, predicted_prob, y_test)
 print(lasso_results)
 
-# 5. Post-Estimation Plots -----------------------------------
+### 5. Post-Estimation Plots -----------------------------------
 
 # (1) ROC Curve and AUC
 roc_curve <- roc(y_test, predicted_prob)
@@ -542,5 +682,214 @@ ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
   theme_minimal()
 
 
+## Group Lasso Logistic Regression--------------
 
-# Add  Group Lasso similarly in modular functions
+### 1. Prepare Data for Group Lasso -------------------------
+# Define groups for numeric and factor variables
+# Train Set
+train_data_no_target <- train_data[, !colnames(train_data) %in% "default_90"]
+numeric_data_train <- train_data_no_target[sapply(train_data_no_target, is.numeric)]
+non_numeric_data_train <- train_data_no_target[, !sapply(train_data_no_target, is.numeric)]
+
+group_vector_train <- c()  # Stores group IDs
+dummy_list_train <- list()  # Stores dummy variables
+group_id <- 1
+
+# Numeric variables (each variable is its own group)
+group_vector_train <- c(group_vector_train, rep(group_id, ncol(numeric_data_train)))
+group_id <- group_id + 1
+
+# Factor variables (each factor's dummies are a group)
+for (col_name in colnames(non_numeric_data_train)) {
+  # Create dummy variables, dropping the first level
+  dummies <- model.matrix(as.formula(paste("~", col_name)), data = train_data_no_target)[, -1]
+  
+  # Ensure dummies is treated as a matrix
+  dummies <- as.matrix(dummies)
+  
+  # Check if the resulting dummies matrix has at least one column
+  if (!is.null(ncol(dummies)) && ncol(dummies) > 0) {
+    # Store the dummies in the list
+    dummy_list_train[[col_name]] <- dummies
+    
+    # Add group markers for the current set of dummy variables
+    group_vector_train <- c(group_vector_train, rep(group_id, ncol(dummies)))
+    
+    # Increment the group ID for the next factor
+    group_id <- group_id + 1
+  } else {
+    # Handle cases where no dummy variables are created (e.g., single-level factors)
+    warning(paste("No dummy variables created for", col_name, "as it has only one level."))
+  }
+}
+
+
+# Combine numeric and dummy data for the train set
+dummy_data_train <- do.call(cbind, dummy_list_train)
+combined_data_train <- cbind(numeric_data_train, dummy_data_train)
+X_train <- as.matrix(combined_data_train)
+y_train <- ifelse(train_data$default_90 == 1, 1, -1)  # Convert target to {-1, 1}
+
+# Test Set
+test_data_no_target <- test_data[, !colnames(test_data) %in% "default_90"]
+numeric_data_test <- test_data_no_target[sapply(test_data_no_target, is.numeric)]
+non_numeric_data_test <- test_data_no_target[, !sapply(test_data_no_target, is.numeric)]
+
+group_vector_test <- c()
+dummy_list_test <- list()
+group_id <- 1
+
+# Numeric variables
+group_vector_test <- c(group_vector_test, rep(group_id, ncol(numeric_data_test)))
+group_id <- group_id + 1
+
+# Factor variables
+for (col_name in colnames(non_numeric_data_test)) {
+  dummies <- model.matrix(as.formula(paste("~", col_name)), data = test_data_no_target)[, -1]
+  dummies <- as.matrix(dummies)
+  
+  if (!is.null(ncol(dummies)) && ncol(dummies) > 0) {
+    dummy_list_test[[col_name]] <- dummies
+    group_vector_test <- c(group_vector_test, rep(group_id, ncol(dummies)))
+    group_id <- group_id + 1
+  } else {
+    warning(paste("No dummy variables created for", col_name, "as it has only one level."))
+  }
+}
+
+
+# Combine numeric and dummy data for the test set
+dummy_data_test <- do.call(cbind, dummy_list_test)
+combined_data_test <- cbind(numeric_data_test, dummy_data_test)
+X_test <- as.matrix(combined_data_test)
+y_test <- ifelse(test_data$default_90 == 1, 1, -1)  # Convert target to {-1, 1}
+
+### 2. Standardize Predictors ---------------------------------
+X_train_scaled <- scale(X_train)
+X_test_scaled <- scale(X_test)
+
+### 3. Fit the Group Lasso Model ------------------------------
+library(gglasso)
+library(doParallel)
+
+# Set up parallel processing
+cl <- makeCluster(detectCores() - 1)
+registerDoParallel(cl)
+
+# Fit group lasso model
+fit_gglasso <- gglasso(
+  x = X_train_scaled, 
+  y = y_train, 
+  group = group_vector_train, 
+  loss = "logit", 
+  nlambda = 50
+)
+
+# Stop parallel processing
+stopCluster(cl)
+
+# Plot Group Lasso Fit
+plot(fit_gglasso, main = "Group Lasso Coefficients Across Lambda")
+### 4. Evaluate Group Lasso Model -----------------------------
+
+evaluate_gglasso_model <- function(model, test_x, test_y, threshold = 0.5) {
+  # Get the smallest lambda value
+  lambda_min <- min(model$lambda)
+  
+  # Find the index of the smallest lambda
+  best_lambda_index <- which(model$lambda == lambda_min)
+  
+  # Predict log-odds for the smallest lambda
+  log_odds <- predict(model, newx = test_x, type = "link")[, best_lambda_index]
+  
+  # Convert log-odds to probabilities using the sigmoid function
+  predicted_prob <- 1 / (1 + exp(-log_odds))
+  
+  # Convert probabilities to binary predictions using the threshold
+  predicted_class <- ifelse(predicted_prob > threshold, 1, -1)
+  
+  # Ensure test_y is properly aligned
+  if (length(predicted_class) != length(test_y)) {
+    stop("Mismatch between predicted values and test_y. Check input dimensions.")
+  }
+  
+  # Calculate accuracy
+  accuracy <- mean(predicted_class == test_y)
+  
+  # Create confusion matrix
+  conf_matrix <- table(Predicted = predicted_class, Actual = test_y)
+  
+  # Precision, recall, and F1 score
+  true_positive <- ifelse("1" %in% rownames(conf_matrix) & "1" %in% colnames(conf_matrix),
+                          conf_matrix["1", "1"], 0)
+  false_positive <- ifelse("1" %in% rownames(conf_matrix) & "-1" %in% colnames(conf_matrix),
+                           conf_matrix["1", "-1"], 0)
+  false_negative <- ifelse("-1" %in% rownames(conf_matrix) & "1" %in% colnames(conf_matrix),
+                           conf_matrix["-1", "1"], 0)
+  
+  precision <- ifelse(true_positive + false_positive > 0,
+                      true_positive / (true_positive + false_positive), 0)
+  recall <- ifelse(true_positive + false_negative > 0,
+                   true_positive / (true_positive + false_negative), 0)
+  f1_score <- ifelse(precision + recall > 0,
+                     2 * (precision * recall) / (precision + recall), 0)
+  
+  # Return evaluation metrics
+  return(list(
+    accuracy = round(accuracy, 4),
+    f1_score = round(f1_score, 4),
+    confusion_matrix = conf_matrix
+  ))
+}
+
+# Evaluate on the test set
+
+results_gglasso <- evaluate_gglasso_model(
+  model = fit_gglasso,
+  test_x = X_test_scaled,
+  test_y = y_test
+)
+
+# Print results
+print(paste("Accuracy:", results_gglasso$accuracy))
+print(paste("F1 Score:", results_gglasso$f1_score))
+print("Confusion Matrix:")
+print(results_gglasso$confusion_matrix)
+
+
+### 5. Post-Estimation Plots -----------------------------------
+# (1) Coefficient Plot for Optimal Lambda
+coef_data <- as.data.frame(coef(fit_gglasso, s = lambda_optimal))
+coef_data$Variable <- rownames(coef_data)
+rownames(coef_data) <- NULL
+coef_data <- coef_data %>% filter(s1 != 0 & Variable != "(Intercept)")
+
+ggplot(coef_data, aes(x = reorder(Variable, s1), y = s1)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Group Lasso Coefficients", x = "Variable", y = "Coefficient") +
+  theme_minimal()
+
+# (2) Calibration Curve
+predicted_prob <- predict(fit_gglasso, newx = X_test_scaled, s = lambda_optimal, type = "response")
+calibration_data <- data.frame(
+  Predicted = as.vector(predicted_prob),
+  Observed = y_test
+)
+calibration_data$Bin <- cut(calibration_data$Predicted, breaks = 10, include.lowest = TRUE)
+
+calibration_curve <- calibration_data %>%
+  group_by(Bin) %>%
+  summarize(
+    Mean_Predicted = mean(Predicted),
+    Mean_Observed = mean(Observed)
+  )
+
+ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Calibration Curve (Group Lasso)", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
+  theme_minimal()
+
+
+# Add  Group Lasso & PCA with regression similarly in modular functions
