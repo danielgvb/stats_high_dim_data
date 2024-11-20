@@ -4,13 +4,15 @@ library(dplyr)
 library(ggplot2)
 library(caret)
 library(glmnet)
-library(gglasso)
 library(skimr)
 library(reshape2)
 library(caTools)
 library(ResourceSelection)
 library(pROC)
 library(car)
+library(gglasso)
+library(doParallel)
+
 # Set Working Directory ---------------------------------
 data_path <- "C:/Users/danie/Documents/GitHub/stats_high_dim_data/data/data.xlsx"
 
@@ -405,20 +407,22 @@ ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
 
 ### 1. Prepare Data for glmnet --------------------------------
 # Convert data to matrix form (required by glmnet)
-x_train <- as.matrix(train_data %>% select(-default_90))
+
+x_train <- as.matrix(train_data[, colnames(train_data) != "default_90"])
 y_train <- train_data$default_90
 
-x_test <- as.matrix(test_data %>% select(-default_90))
+x_test <- as.matrix(test_data[, colnames(test_data) != "default_90"])
 y_test <- test_data$default_90
 
 # scale predictors
-x_train <- scale(x_train)
-x_test <- scale(x_test)
+#x_train <- scale(x_train)
+#x_test <- scale(x_test)
 
 
 ### 2. Perform Cross-Validation for Lasso Logistic Regression --
 set.seed(123)
-cv_lasso <- cv.glmnet(x_train, y_train, family = "binomial", alpha = 1, nfolds = 10)
+cv_lasso <- cv.glmnet(x_train, y_train, family = "binomial",
+                      standarize = T,alpha = 1, nfolds = 10)
 
 # Plot of Cross-Validation Results 
 # Optimal lambda
@@ -465,7 +469,7 @@ cat("Optimal lambda:", lambda_optimal, "\n")
 
 
 ### 3. Fit the Final Model with Optimal Lambda -----------------
-lasso_model <- glmnet(x_train, y_train, family = "binomial", alpha = 1, lambda = lambda_optimal)
+lasso_model <- glmnet(x_train, y_train, family = "binomial",standarize = T , alpha = 1, lambda = lambda_optimal)
 
 ### 4. Evaluate Model ------------------------------------------
 # Predicted probabilities
@@ -540,22 +544,13 @@ ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
 ## Elastic Net Logistic Regression--------------
 
 ### 1. Prepare Data for glmnet --------------------------------
-# Convert data to matrix form (required by glmnet)
-x_train <- as.matrix(train_data %>% select(-default_90))
-y_train <- train_data$default_90
-
-x_test <- as.matrix(test_data %>% select(-default_90))
-y_test <- test_data$default_90
-
-# Scale predictors
-x_train <- scale(x_train)
-x_test <- scale(x_test)
 
 ### 2. Perform Cross-Validation for Elastic Net Logistic Regression --
 # Elastic net uses `alpha` to mix lasso (alpha = 1) and ridge (alpha = 0)
 set.seed(123)
 cv_elastic_net <- cv.glmnet(
   x_train, y_train, 
+  standarize = T,
   family = "binomial", 
   alpha = 0.5,        # Elastic net (mix of lasso and ridge)
   nfolds = 10         # 10-fold cross-validation
@@ -586,6 +581,7 @@ set.seed(123)
 cv_elastic_net <- cv.glmnet(
   x_train, y_train,
   family = "binomial",
+  standarize = T,
   alpha = 0.5,
   lambda = lambda_grid,
   nfolds = 10
@@ -609,6 +605,7 @@ legend("topright", legend = c("lambda.min", "lambda.1se"), col = c("blue", "red"
 elastic_net_model <- glmnet(
   x_train, y_train, 
   family = "binomial", 
+  standarize = T,
   alpha = 0.5,        # Elastic net
   lambda = lambda_min # Use lambda.min for final model
 )
@@ -769,8 +766,6 @@ X_train_scaled <- scale(X_train)
 X_test_scaled <- scale(X_test)
 
 ### 3. Fit the Group Lasso Model ------------------------------
-library(gglasso)
-library(doParallel)
 
 # Set up parallel processing
 cl <- makeCluster(detectCores() - 1)
@@ -857,21 +852,44 @@ print("Confusion Matrix:")
 print(results_gglasso$confusion_matrix)
 
 
+
 ### 5. Post-Estimation Plots -----------------------------------
 # (1) Coefficient Plot for Optimal Lambda
-coef_data <- as.data.frame(coef(fit_gglasso, s = lambda_optimal))
+
+# Extract coefficients for the optimal lambda
+lambda_optimal <- min(fit_gglasso$lambda)  # Smallest lambda
+coefficients <- coef(fit_gglasso, s = lambda_optimal)
+
+# Convert to a data frame
+coef_data <- as.data.frame(as.matrix(coefficients))
 coef_data$Variable <- rownames(coef_data)
 rownames(coef_data) <- NULL
-coef_data <- coef_data %>% filter(s1 != 0 & Variable != "(Intercept)")
 
-ggplot(coef_data, aes(x = reorder(Variable, s1), y = s1)) +
+# Rename the coefficient column (default name is "s1" or similar)
+colnames(coef_data)[1] <- "Coefficient"
+
+# Filter for non-zero coefficients
+coef_data <- coef_data %>% filter(Coefficient != 0 & Variable != "(Intercept)")
+
+ggplot(coef_data, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
   geom_bar(stat = "identity", fill = "lightblue") +
   coord_flip() +
   labs(title = "Group Lasso Coefficients", x = "Variable", y = "Coefficient") +
   theme_minimal()
 
+
 # (2) Calibration Curve
-predicted_prob <- predict(fit_gglasso, newx = X_test_scaled, s = lambda_optimal, type = "response")
+
+# Predict log-odds for the smallest lambda
+lambda_min <- min(fit_gglasso$lambda)
+
+# Find the index of the smallest lambda
+best_lambda_index <- which(fit_gglasso$lambda == lambda_min)
+log_odds <- predict(fit_gglasso, newx = X_test_scaled, type = "link")[, best_lambda_index]
+
+# Convert log-odds to probabilities using the sigmoid function
+predicted_prob <- 1 / (1 + exp(-log_odds))
+
 calibration_data <- data.frame(
   Predicted = as.vector(predicted_prob),
   Observed = y_test
@@ -890,6 +908,82 @@ ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
   labs(title = "Calibration Curve (Group Lasso)", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
   theme_minimal()
+
+
+## Group Lasso with cross validation----------------
+# Set up k-fold cross-validation
+k <- 10  # Number of folds
+folds <- createFolds(y_train, k = k, list = TRUE)
+
+# Prepare storage for cross-validation results
+cv_results <- matrix(0, nrow = length(fit_gglasso$lambda), ncol = k)
+
+# Set up parallel processing
+cl <- makeCluster(detectCores() - 1)
+registerDoParallel(cl)
+
+# Perform cross-validation
+for (fold_idx in 1:k) {
+  # Split data into training and validation sets for this fold
+  val_idx <- folds[[fold_idx]]
+  X_train_cv <- X_train_scaled[-val_idx, ]
+  y_train_cv <- y_train[-val_idx]
+  X_val_cv <- X_train_scaled[val_idx, ]
+  y_val_cv <- y_train[val_idx]
+  
+  # Fit group lasso on training data
+  fit_cv <- gglasso(
+    x = X_train_cv, 
+    y = y_train_cv, 
+    group = group_vector_train, 
+    loss = "logit", 
+    nlambda = 50
+  )
+  
+  # Evaluate on validation data
+  for (lambda_idx in 1:length(fit_cv$lambda)) {
+    # Predict for this lambda
+    log_odds <- predict(fit_cv, newx = X_val_cv, type = "link")[, lambda_idx]
+    predicted_prob <- 1 / (1 + exp(-log_odds))
+    predicted_class <- ifelse(predicted_prob > 0.5, 1, -1)
+    
+    # Store validation accuracy
+    cv_results[lambda_idx, fold_idx] <- mean(predicted_class == y_val_cv)
+  }
+}
+
+# Stop parallel processing
+stopCluster(cl)
+
+# Average accuracy across folds for each lambda
+cv_mean_accuracy <- rowMeans(cv_results)
+
+# Identify the best lambda (maximum accuracy)
+best_lambda_idx <- which.max(cv_mean_accuracy)
+best_lambda <- fit_gglasso$lambda[best_lambda_idx]
+
+# Print best lambda
+cat("Best lambda:", best_lambda, "\n")
+
+# Plot lambda min and 1se
+plot(fit_gglasso)
+
+# Refit the model on the full training data with the best lambda
+final_fit <- gglasso(
+  x = X_train_scaled, 
+  y = y_train, 
+  group = group_vector_train, 
+  loss = "logit", 
+  lambda = best_lambda
+)
+
+# Evaluate the final model on the test set
+log_odds_test <- predict(final_fit, newx = X_test_scaled, type = "link")
+predicted_prob_test <- 1 / (1 + exp(-log_odds_test))
+predicted_class_test <- ifelse(predicted_prob_test > 0.5, 1, -1)
+accuracy_test <- mean(predicted_class_test == y_test)
+
+cat("Test set accuracy with best lambda:", accuracy_test, "\n")
 
 
 # Add  Group Lasso & PCA with regression similarly in modular functions
