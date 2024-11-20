@@ -8,7 +8,9 @@ library(gglasso)
 library(skimr)
 library(reshape2)
 library(caTools)
-
+library(ResourceSelection)
+library(pROC)
+library(car)
 # Set Working Directory ---------------------------------
 data_path <- "C:/Users/danie/Documents/GitHub/stats_high_dim_data/data/data.xlsx"
 
@@ -58,16 +60,17 @@ data <- data %>%
   select(-periodicity)
 
 ## Map Education Levels to Numeric
-data <- data %>%
-  mutate(max_education = case_when(
-    max_education == "primaria" ~ 1,
-    max_education == "secundaria" ~ 2,
-    max_education == "técnico" ~ 3,
-    max_education == "tecnólogo" ~ 4,
-    max_education == "Universitario" ~ 5,
-    max_education == "Posgrado" ~ 6,
-    TRUE ~ NA_real_
-  ))
+# If we remove this then the model does not find min lambda
+# data <- data %>%
+#   mutate(max_education = case_when(
+#     max_education == "primaria" ~ 1,
+#     max_education == "secundaria" ~ 2,
+#     max_education == "técnico" ~ 3,
+#     max_education == "tecnólogo" ~ 4,
+#     max_education == "Universitario" ~ 5,
+#     max_education == "Posgrado" ~ 6,
+#     TRUE ~ NA_real_
+#   ))
 
 
 
@@ -77,6 +80,18 @@ data <- data %>%
     installment_periodic = installment / periodicity_num,
     time_difference_days = as.numeric(difftime(as.Date(date_limit), as.Date(date_approval), units = "days"))
   )
+
+## Date furhter information
+# First create year, month, day, weekday
+
+# Extract features from the date-time variables
+# date approval
+data$m_date_approval <- format(data$date_approval, "%m")
+data$wd_date_approval <- weekdays(data$date_approval)
+
+# date limit
+data$m_date_limit <- format(data$date_limit, "%m")
+data$wd_date_limit <- weekdays(data$date_limit)
 
 
 ## Convert POSIXct to numeric
@@ -117,10 +132,9 @@ test_data <- subset(data, split == FALSE)
 
 
 
-
 # Exploratory Data Analysis -----------------------------
 
-## Numeric Variables
+## Numeric Variables------------
 numeric_data <- train_data %>% select(where(is.numeric))
 skim(numeric_data)
 ### Histograms
@@ -129,7 +143,7 @@ for (col_name in colnames(numeric_data)) {
        xlab = col_name, col = "lightblue", border = "black")
 }
 
-### Density Plots
+### Density Plots--------------
 for (col_name in colnames(numeric_data)) {
   print(ggplot(train_data, aes(x = .data[[col_name]], fill = factor(default_90))) +
     geom_density(alpha = 0.5) +
@@ -138,12 +152,13 @@ for (col_name in colnames(numeric_data)) {
 }
 
 
-## Non-Numeric Variables
+## Non-Numeric Variables------------
 non_numeric_data <- train_data %>% select(where(~ !is.numeric(.)))
 unique_counts <- sapply(non_numeric_data, function(x) length(unique(x)))
 mode_values <- sapply(non_numeric_data, function(x) names(which.max(table(x))))
 print(mode_values)
-# Correlation Analysis ----------------------------------
+
+## Correlation Analysis ----------------------------------
 
 cor_matrix <- cor(numeric_data, use = "complete.obs")
 melted_cor_matrix <- melt(cor_matrix)
@@ -155,10 +170,10 @@ ggplot(data = melted_cor_matrix, aes(x = Var1, y = Var2, fill = value)) +
 
 # Model Training and Evaluation ------------------------
 
-## Logistic Regression
+## Logistic Regression----------------
 logistic_model <- glm(default_90 ~ ., data = train_data, family = binomial)
 
-## Evaluate Logistic Regression
+### Evaluate Logistic Regression------------
 evaluate_model <- function(model, test_data, target_col) {
   predicted_prob <- predict(model, newdata = test_data, type = "response")
   predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
@@ -173,5 +188,359 @@ logistic_results <- evaluate_model(logistic_model, test_data, "default_90")
 print(logistic_results)
 
 
+### Post-Estimation Plots---------------
+par(mfrow = c(2,2))
+plot(logistic_model)
 
-# Add further models (Lasso, Elastic Net, Group Lasso) similarly in modular functions
+#### 1. ROC Curve and AUC ------------------------------------
+par(mfrow = c(1,1))
+
+# Predicted probabilities
+predicted_prob <- predict(logistic_model, newdata = test_data, type = "response")
+
+# ROC and AUC
+roc_curve <- roc(test_data$default_90, predicted_prob)
+auc_value <- auc(roc_curve)
+
+# Plot ROC Curve
+plot(roc_curve, col = "blue", main = paste("ROC Curve (AUC =", round(auc_value, 2), ")"))
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+#### 2. Confusion Matrix Heatmap -----------------------------
+
+# Predicted classes
+predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
+
+# Confusion matrix
+conf_matrix <- table(Predicted = predicted_class, Actual = test_data$default_90)
+
+# Heatmap
+ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  geom_text(aes(label = Freq), color = "black") +
+  labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
+  theme_minimal()
+
+#### 3. Coefficient Plot -------------------------------------
+# Extract coefficients
+coefficients <- summary(logistic_model)$coefficients
+coef_data <- as.data.frame(coefficients)
+coef_data$Variable <- rownames(coefficients)
+rownames(coef_data) <- NULL
+
+# Plot coefficients
+ggplot(coef_data, aes(x = reorder(Variable, Estimate), y = Estimate)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Coefficient Plot", x = "Variable", y = "Estimate") +
+  theme_minimal()
+
+#### 4. Calibration Curve ------------------------------------
+
+# Bin predicted probabilities
+calibration_data <- data.frame(
+  Predicted = predicted_prob,
+  Observed = test_data$default_90
+)
+calibration_data$Bin <- cut(calibration_data$Predicted, breaks = 10, include.lowest = TRUE)
+
+# Mean predicted and observed probabilities by bin
+calibration_curve <- calibration_data %>%
+  group_by(Bin) %>%
+  summarize(
+    Mean_Predicted = mean(Predicted),
+    Mean_Observed = mean(Observed)
+  )
+
+# Plot calibration curve
+ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Calibration Curve", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
+  theme_minimal()
+
+
+## Lasso Logistic Regression--------------
+
+### 1. Prepare Data for glmnet --------------------------------
+# Convert data to matrix form (required by glmnet)
+x_train <- as.matrix(train_data %>% select(-default_90))
+y_train <- train_data$default_90
+
+x_test <- as.matrix(test_data %>% select(-default_90))
+y_test <- test_data$default_90
+
+# scale predictors
+x_train <- scale(x_train)
+x_test <- scale(x_test)
+
+
+### 2. Perform Cross-Validation for Lasso Logistic Regression --
+set.seed(123)
+cv_lasso <- cv.glmnet(x_train, y_train, family = "binomial", alpha = 1, nfolds = 10)
+
+# Plot of Cross-Validation Results 
+# Optimal lambda
+lambda_min <- cv_lasso$lambda.min
+lambda_1se <- cv_lasso$lambda.1se
+
+# Plot deviance against log(lambda)
+par(mfrow= c(1,1))
+plot(cv_lasso, main = "Cross-Validation for Lasso Logistic Regression")
+abline(v = log(lambda_min), col = "blue", lty = 2, lwd = 2)  # Vertical line for lambda.min
+abline(v = log(lambda_1se), col = "red", lty = 2, lwd = 2)   # Vertical line for lambda.1se
+legend("topright", legend = c("lambda.min", "lambda.1se"), col = c("blue", "red"), lty = 2, lwd = 2)
+
+# We find the lambda to the top left, meaning it could be further left:
+# Define a custom lambda sequence (smaller values)
+# lambda_grid <- 10^seq(-10, 2, length = 100)  # Adjust range to include smaller lambda values
+# 
+# # Perform Cross-Validation with custom lambda grid
+# set.seed(123)
+# cv_lasso <- cv.glmnet(
+#   x_train, y_train, 
+#   family = "binomial", 
+#   alpha = 1, 
+#   lambda = lambda_grid, 
+#   nfolds = 10
+# )
+# 
+# # Optimal lambdas
+# lambda_min <- cv_lasso$lambda.min
+# lambda_1se <- cv_lasso$lambda.1se
+# 
+# # Plot the updated deviance vs log(lambda) with the extended search range
+# plot(cv_lasso, main = "Extended Cross-Validation for Lasso Logistic Regression")
+# abline(v = log(lambda_min), col = "blue", lty = 2, lwd = 2)  # Vertical line for lambda.min
+# abline(v = log(lambda_1se), col = "red", lty = 2, lwd = 2)   # Vertical line for lambda.1se
+# legend("topright", legend = c("lambda.min", "lambda.1se"), col = c("blue", "red"), lty = 2, lwd = 2)
+# 
+# 
+# # Lambda is still max left, there is something off with the model
+
+# Optimal lambda
+lambda_optimal <- cv_lasso$lambda.min
+cat("Optimal lambda:", lambda_optimal, "\n")
+
+
+### 3. Fit the Final Model with Optimal Lambda -----------------
+lasso_model <- glmnet(x_train, y_train, family = "binomial", alpha = 1, lambda = lambda_optimal)
+
+### 4. Evaluate Model ------------------------------------------
+# Predicted probabilities
+predicted_prob <- predict(lasso_model, s = lambda_optimal, newx = x_test, type = "response")
+
+# Predicted classes
+predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
+
+# Model evaluation metrics
+evaluate_lasso <- function(predicted_class, predicted_prob, y_test) {
+  accuracy <- mean(predicted_class == y_test)
+  confusion <- confusionMatrix(factor(predicted_class), factor(y_test))
+  auc_value <- auc(roc(y_test, predicted_prob))
+  f1_score <- 2 * (confusion$byClass["Pos Pred Value"] * confusion$byClass["Sensitivity"]) /
+    (confusion$byClass["Pos Pred Value"] + confusion$byClass["Sensitivity"])
+  return(list(accuracy = accuracy, f1_score = f1_score, auc = auc_value))
+}
+
+lasso_results <- evaluate_lasso(predicted_class, predicted_prob, y_test)
+print(lasso_results)
+
+# 5. Post-Estimation Plots -----------------------------------
+
+# (1) ROC Curve and AUC
+roc_curve <- roc(y_test, predicted_prob)
+plot(roc_curve, col = "blue", main = paste("ROC Curve (AUC =", round(lasso_results$auc, 2), ")"))
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+# (2) Confusion Matrix Heatmap
+conf_matrix <- table(Predicted = predicted_class, Actual = y_test)
+ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  geom_text(aes(label = Freq), color = "black") +
+  labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
+  theme_minimal()
+
+# (3) Coefficient Plot
+coef_data <- as.data.frame(as.matrix(coef(lasso_model, s = lambda_optimal)))
+coef_data$Variable <- rownames(coef_data)
+colnames(coef_data) <- c("Coefficient", "Variable")
+coef_data <- coef_data %>% filter(Coefficient != 0 & Variable != "(Intercept)")
+
+ggplot(coef_data, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Lasso Coefficient Plot", x = "Variable", y = "Coefficient") +
+  theme_minimal()
+
+# (4) Calibration Curve
+calibration_data <- data.frame(
+  Predicted = as.vector(predicted_prob),
+  Observed = y_test
+)
+calibration_data$Bin <- cut(calibration_data$Predicted, breaks = 10, include.lowest = TRUE)
+
+calibration_curve <- calibration_data %>%
+  group_by(Bin) %>%
+  summarize(
+    Mean_Predicted = mean(Predicted),
+    Mean_Observed = mean(Observed)
+  )
+
+ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Calibration Curve", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
+  theme_minimal()
+
+
+
+## Elastic Net Logistic Regression--------------
+
+### 1. Prepare Data for glmnet --------------------------------
+# Convert data to matrix form (required by glmnet)
+x_train <- as.matrix(train_data %>% select(-default_90))
+y_train <- train_data$default_90
+
+x_test <- as.matrix(test_data %>% select(-default_90))
+y_test <- test_data$default_90
+
+# Scale predictors
+x_train <- scale(x_train)
+x_test <- scale(x_test)
+
+### 2. Perform Cross-Validation for Elastic Net Logistic Regression --
+# Elastic net uses `alpha` to mix lasso (alpha = 1) and ridge (alpha = 0)
+set.seed(123)
+cv_elastic_net <- cv.glmnet(
+  x_train, y_train, 
+  family = "binomial", 
+  alpha = 0.5,        # Elastic net (mix of lasso and ridge)
+  nfolds = 10         # 10-fold cross-validation
+)
+
+# Plot of Cross-Validation Results
+# Optimal lambdas
+lambda_min <- cv_elastic_net$lambda.min
+lambda_1se <- cv_elastic_net$lambda.1se
+
+# Plot deviance against log(lambda)
+par(mfrow = c(1, 1))
+plot(cv_elastic_net, main = "Cross-Validation for Elastic Net Logistic Regression")
+abline(v = log(lambda_min), col = "blue", lty = 2, lwd = 2)  # Vertical line for lambda.min
+abline(v = log(lambda_1se), col = "red", lty = 2, lwd = 2)   # Vertical line for lambda.1se
+legend("topright", legend = c("lambda.min", "lambda.1se"), col = c("blue", "red"), lty = 2, lwd = 2)
+
+cat("Optimal lambda (min):", lambda_min, "\n")
+cat("Optimal lambda (1se):", lambda_1se, "\n")
+
+
+# We find the lambda to the top left, meaning it could be further left:
+# Define a custom lambda sequence (smaller values)
+lambda_grid <- 10^seq(-10, 2, length = 100)  # Adjust range to include smaller lambda values
+
+# Perform Cross-Validation with custom lambda grid
+set.seed(123)
+cv_elastic_net <- cv.glmnet(
+  x_train, y_train,
+  family = "binomial",
+  alpha = 0.5,
+  lambda = lambda_grid,
+  nfolds = 10
+)
+
+
+# Optimal lambdas
+lambda_min <- cv_elastic_net$lambda.min
+lambda_1se <- cv_elastic_net$lambda.1se
+
+# Plot the updated deviance vs log(lambda) with the extended search range
+plot(cv_elastic_net, main = "Extended Cross-Validation for Elastic Net Regression")
+abline(v = log(lambda_min), col = "blue", lty = 2, lwd = 2)  # Vertical line for lambda.min
+abline(v = log(lambda_1se), col = "red", lty = 2, lwd = 2)   # Vertical line for lambda.1se
+legend("topright", legend = c("lambda.min", "lambda.1se"), col = c("blue", "red"), lty = 2, lwd = 2)
+
+
+
+
+### 3. Fit the Final Model with Optimal Lambda -----------------
+elastic_net_model <- glmnet(
+  x_train, y_train, 
+  family = "binomial", 
+  alpha = 0.5,        # Elastic net
+  lambda = lambda_min # Use lambda.min for final model
+)
+
+### 4. Evaluate Model ------------------------------------------
+# Predicted probabilities
+predicted_prob <- predict(elastic_net_model, s = lambda_min, newx = x_test, type = "response")
+
+# Predicted classes
+predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
+
+# Model evaluation metrics
+evaluate_elastic_net <- function(predicted_class, predicted_prob, y_test) {
+  accuracy <- mean(predicted_class == y_test)
+  confusion <- confusionMatrix(factor(predicted_class), factor(y_test))
+  auc_value <- auc(roc(y_test, predicted_prob))
+  f1_score <- 2 * (confusion$byClass["Pos Pred Value"] * confusion$byClass["Sensitivity"]) /
+    (confusion$byClass["Pos Pred Value"] + confusion$byClass["Sensitivity"])
+  return(list(accuracy = accuracy, f1_score = f1_score, auc = auc_value))
+}
+
+elastic_net_results <- evaluate_elastic_net(predicted_class, predicted_prob, y_test)
+print(elastic_net_results)
+
+### 5. Post-Estimation Plots -----------------------------------
+
+# (1) ROC Curve and AUC
+roc_curve <- roc(y_test, predicted_prob)
+plot(roc_curve, col = "blue", main = paste("ROC Curve (AUC =", round(elastic_net_results$auc, 2), ")"))
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+# (2) Confusion Matrix Heatmap
+conf_matrix <- table(Predicted = predicted_class, Actual = y_test)
+ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  geom_text(aes(label = Freq), color = "black") +
+  labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
+  theme_minimal()
+
+# (3) Coefficient Plot
+coef_data <- as.data.frame(as.matrix(coef(elastic_net_model, s = lambda_min)))
+coef_data$Variable <- rownames(coef_data)
+colnames(coef_data) <- c("Coefficient", "Variable")
+coef_data <- coef_data %>% filter(Coefficient != 0 & Variable != "(Intercept)")
+
+ggplot(coef_data, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Elastic Net Coefficient Plot", x = "Variable", y = "Coefficient") +
+  theme_minimal()
+
+# (4) Calibration Curve
+calibration_data <- data.frame(
+  Predicted = as.vector(predicted_prob),
+  Observed = y_test
+)
+calibration_data$Bin <- cut(calibration_data$Predicted, breaks = 10, include.lowest = TRUE)
+
+calibration_curve <- calibration_data %>%
+  group_by(Bin) %>%
+  summarize(
+    Mean_Predicted = mean(Predicted),
+    Mean_Observed = mean(Observed)
+  )
+
+ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Calibration Curve", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
+  theme_minimal()
+
+
+
+# Add  Group Lasso similarly in modular functions
