@@ -909,6 +909,8 @@ ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
   labs(title = "Calibration Curve (Group Lasso)", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
   theme_minimal()
 
+# From the calibration curve we see underfiting of the model overall
+
 
 ## Group Lasso with cross validation----------------
 # Set up k-fold cross-validation
@@ -985,5 +987,147 @@ accuracy_test <- mean(predicted_class_test == y_test)
 
 cat("Test set accuracy with best lambda:", accuracy_test, "\n")
 
-# Add plots and Confussion matrix
-# Add  Group Lasso & PCA with regression similarly in modular functions
+### 6. Evaluate Cross-Validated Model ------------------------
+
+# Evaluate the final cross-validated model on the test set
+results_cv <- evaluate_gglasso_model(
+  model = final_fit,
+  test_x = X_test_scaled,
+  test_y = y_test
+)
+
+# Print results
+print(paste("Accuracy (CV):", results_cv$accuracy))
+print(paste("F1 Score (CV):", results_cv$f1_score))
+print("Confusion Matrix (CV):")
+print(results_cv$confusion_matrix)
+
+### 7. Post-Estimation Plots for Cross-Validated Model ------------
+
+# (1) Coefficient Plot for Cross-Validated Model
+lambda_cv <- best_lambda
+coefficients_cv <- coef(final_fit, s = lambda_cv)
+
+# Convert to a data frame
+coef_data_cv <- as.data.frame(as.matrix(coefficients_cv))
+coef_data_cv$Variable <- rownames(coef_data_cv)
+rownames(coef_data_cv) <- NULL
+
+# Rename the coefficient column (default name is "s1" or similar)
+colnames(coef_data_cv)[1] <- "Coefficient"
+
+# Filter for non-zero coefficients
+coef_data_cv <- coef_data_cv %>% filter(Coefficient != 0 & Variable != "(Intercept)")
+
+ggplot(coef_data_cv, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Group Lasso Coefficients (CV Model)", x = "Variable", y = "Coefficient") +
+  theme_minimal()
+
+# (2) Calibration Curve for Cross-Validated Model
+log_odds_cv <- predict(final_fit, newx = X_test_scaled, type = "link")
+predicted_prob_cv <- 1 / (1 + exp(-log_odds_cv))
+
+calibration_data_cv <- data.frame(
+  Predicted = as.vector(predicted_prob_cv),
+  Observed = y_test
+)
+calibration_data_cv$Bin <- cut(calibration_data_cv$Predicted, breaks = 10, include.lowest = TRUE)
+
+calibration_curve_cv <- calibration_data_cv %>%
+  group_by(Bin) %>%
+  summarize(
+    Mean_Predicted = mean(Predicted),
+    Mean_Observed = mean(Observed)
+  )
+
+ggplot(calibration_curve_cv, aes(x = Mean_Predicted, y = Mean_Observed)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  labs(title = "Calibration Curve (CV Model)", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
+  theme_minimal()
+
+
+## GAM Model----------------
+# Load the mgcv package
+# gam library aswell
+library(mgcv)
+
+# Fit a GAM for binary classification
+gam_model <- gam(default_90 ~ s(age) + s(contributions_balance) + max_education + gender, 
+                 data = train_data, 
+                 family = binomial(link = "logit"))
+
+# Summarize the model
+summary(gam_model)
+
+# Predict probabilities
+predicted_prob <- predict(gam_model, newdata = test_data, type = "response")
+
+# Convert probabilities to binary predictions
+predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
+
+# Evaluate the model
+conf_matrix <- table(Predicted = predicted_class, Actual = test_data$default_90)
+accuracy <- mean(predicted_class == test_data$default_90)
+
+# Print evaluation metrics
+print(conf_matrix)
+print(paste("Accuracy:", accuracy))
+
+## PCA reg--------------------
+
+#Sparse principal components
+
+library(sparsepca)
+#data on acute respiratory illnesses from World Health Organization (see splides)
+load("whoari.RData")
+n<- NROW(X)
+fit <- spca(X, k=10,   scale=TRUE, verbose=F)
+summary(fit)
+#
+#
+#choice of alpha
+var.sp<- NULL
+reg.par<- seq(0,0.25, length=20)
+for(j in 1:20){
+  fit <- spca(X, k=5,alpha= reg.par[j],  scale=TRUE, verbose=F)
+  var.sp[j]<-sum(fit$sdev^2)
+  print(c(reg.par[j], sum(fit$sdev^2)))	
+}
+par(mfrow=c(1,1))
+plot(reg.par, var.sp, type="l", xlab=expression(lambda[1]), ylab="Explained variance", lwd=2)
+#always decreasing
+#
+#
+1-var.sp/var.sp[1]
+diff(1-var.sp/var.sp[1])
+
+plot(diff(1-var.sp/var.sp[1]))
+#select the nineth? just before elbow 
+#
+#
+
+#select 5 components
+fit <- spca(X, k=5,alpha= reg.par[9],   scale=TRUE, verbose=F)
+#
+# Print non-zero loadings
+V <- fit$loadings
+for (j in 1:ncol(V)) {
+  ind <- which(V[,j] != 0)
+  v <- V[ind,j]
+  names(v) <- colnames(X)[ind]
+  print(v)
+}
+
+
+fit <- spca(scale(X), k=5,alpha= reg.par[9],  scale=TRUE, verbose=F)
+summary(fit)
+V<- fit$loadings
+#
+# Regress on principal components
+pcData <- as.data.frame(scale(X) %*% V)
+m1 <- lm(y~., pcData)
+summary(m1)
+
