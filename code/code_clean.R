@@ -1055,7 +1055,8 @@ ggplot(calibration_curve_cv, aes(x = Mean_Predicted, y = Mean_Observed)) +
 library(mgcv)
 
 # Fit a GAM for binary classification
-gam_model <- gam(default_90 ~ s(age) + s(contributions_balance) + max_education + gender, 
+gam_model <- gam(default_90 ~ s(credit_limit) + s(capital_balance)
+                   + s(contributions_balance) + max_education + gender + city_born, 
                  data = train_data, 
                  family = binomial(link = "logit"))
 
