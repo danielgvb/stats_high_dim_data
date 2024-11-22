@@ -12,7 +12,8 @@ library(pROC)
 library(car)
 library(gglasso)
 library(doParallel)
-
+library(mgcv) # for GAM
+library(elasticnet) # for sparse pca
 # Set Working Directory ---------------------------------
 data_path <- "C:/Users/danie/Documents/GitHub/stats_high_dim_data/data/data.xlsx"
 
@@ -126,8 +127,8 @@ data[columns_to_transform] <- lapply(data[columns_to_transform], function(col) l
 # Move "default_90" to the last column
 data <- data[, c(setdiff(names(data), "default_90"), "default_90")]
 
-#REMOVE AGE because of Noise
-#data <- data[, !names(data) %in% c("age")]
+#REMOVE AGE because of Noise--------------
+data <- data[, !names(data) %in% c("age")]
 
 # Train-Test Split --------------------------------------
 set.seed(123)
@@ -225,6 +226,7 @@ ggplot(chi2_results_df, aes(x = reorder(Variable, -P_value), y = P_value)) +
 
 ## Logistic Regression----------------
 logistic_model <- glm(default_90 ~ ., data = train_data, family = binomial)
+summary(logistic_model)
 
 ### Evaluate Logistic Regression------------
 evaluate_model <- function(model, test_data, target_col) {
@@ -1077,6 +1079,8 @@ ggplot(coef_data_cv, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
   theme_minimal()
 
 # (2) Calibration Curve for Cross-Validated Model
+y_test_binary <- ifelse(y_test == -1, 0, 1)
+
 log_odds_cv <- predict(final_fit, newx = X_test_scaled, type = "link")
 predicted_prob_cv <- 1 / (1 + exp(-log_odds_cv))
 
@@ -1084,8 +1088,9 @@ calibration_data_cv <- data.frame(
   Predicted = as.vector(predicted_prob_cv),
   Observed = y_test
 )
-calibration_data_cv$Bin <- cut(calibration_data_cv$Predicted, breaks = 10, include.lowest = TRUE)
 
+calibration_data_cv$Bin <- cut(calibration_data_cv$Predicted, breaks = 10, include.lowest = TRUE)
+calibration_curve_cv
 calibration_curve_cv <- calibration_data_cv %>%
   group_by(Bin) %>%
   summarize(
@@ -1099,10 +1104,12 @@ ggplot(calibration_curve_cv, aes(x = Mean_Predicted, y = Mean_Observed)) +
   labs(title = "Calibration Curve (CV Model)", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
   theme_minimal()
 
+#FIX--------------------------------------------
+#fix calibration curve for -1,1
 
 ## GAM Model----------------
 # Using most relevant poly order (`s()` indicates the poly order for each predictor)
-gam_model <- gam(default_90 ~ s(age) + s(credit_limit) + s(capital_balance) + s(days_due) + gender + income_group, 
+gam_model <- gam(default_90 ~  + s(credit_limit) + s(capital_balance) + s(days_due) + gender + income_group, 
                  data = train_data, 
                  family = binomial)
 
@@ -1178,14 +1185,15 @@ ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
 
 ### Prepare Data for Sparse PCA ---------------------------------
 # Exclude target variable for PCA
+library(sparsepca)
 x_train <- as.matrix(train_data[, colnames(train_data) != "default_90"])
-
 ### Apply Sparse PCA to Train Data ------------------------------
 set.seed(123)
 
 # Center the data and check the scale parametrization-
 k <- 10  # Number of components to consider initially
-fit <- spca(x_train, k = k, scale = TRUE, verbose = FALSE)
+
+fit <- spca(X_train, k = k, scale = TRUE, verbose = FALSE)
 
 ### Calculate Cumulative Variance Explained --------------------
 explained_variance <- cumsum(fit$sdev^2) / sum(fit$sdev^2)
@@ -1196,7 +1204,7 @@ cat("Number of components explaining at least 70% of variance:", components_70, 
 
 ### Use Only Top Components -------------------------------------
 # Fit sparse PCA again with the optimal number of components
-fit <- spca(x_train, k = components_70, alpha = 0.1, scale = TRUE, verbose = FALSE)
+fit <- spca(X_train, k = components_70, alpha = 0.1, scale = TRUE, verbose = FALSE)
 
 # Extract Principal Components
 V <- fit$loadings
