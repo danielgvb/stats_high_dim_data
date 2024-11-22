@@ -15,7 +15,7 @@ library(doParallel)
 library(mgcv) # for GAM
 library(sparsepca) # for sparse pca
 # Set Working Directory ---------------------------------
-data_path <- "C:/Users/danie/Documents/GitHub/stats_high_dim_data/data/data.xlsx"
+data_path <- "C:/Users/danie/Documents/GitHub/stats_high_dim_data/data/data_syntetic_age.xlsx"
 
 # Import Data -------------------------------------------
 data <- read_excel(data_path)
@@ -128,7 +128,7 @@ data[columns_to_transform] <- lapply(data[columns_to_transform], function(col) l
 data <- data[, c(setdiff(names(data), "default_90"), "default_90")]
 
 #REMOVE AGE because of Noise--------------
-data <- data[, !names(data) %in% c("age")]
+#data <- data[, !names(data) %in% c("age")]
 
 # Train-Test Split --------------------------------------
 set.seed(123)
@@ -186,7 +186,7 @@ for (col_name in colnames(non_numeric_data)) {
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
   )
 }
-# All bimensual are defaulty
+# All bimensual are defaulty (is just 1)
 
 ### Chi Squared------------
 
@@ -554,7 +554,7 @@ evaluate_lasso <- function(predicted_prob, y_test, threshold = 0.3) {
 
 # Step 4: Predicted Probabilities and Evaluation -----------------
 predicted_prob <- predict(lasso_model, s = lambda_optimal, newx = x_test, type = "response")
-lasso_results <- evaluate_lasso(predicted_prob, y_test, threshold = 0.3)
+lasso_results <- evaluate_lasso(predicted_prob, y_test, threshold = 0.5)
 print(lasso_results)
 
 # Step 5: Post-Estimation Plots ----------------------------------
@@ -854,278 +854,119 @@ stopCluster(cl)
 
 # Plot Group Lasso Fit
 plot(fit_gglasso, main = "Group Lasso Coefficients Across Lambda")
-### 4. Evaluate Group Lasso Model -----------------------------
 
-evaluate_gglasso_model <- function(model, test_x, test_y, threshold = 0.5) {
-  # Get the smallest lambda value
-  lambda_min <- min(model$lambda)
-  
-  # Find the index of the smallest lambda
-  best_lambda_index <- which(model$lambda == lambda_min)
-  
-  # Predict log-odds for the smallest lambda
-  log_odds <- predict(model, newx = test_x, type = "link")[, best_lambda_index]
-  
-  # Convert log-odds to probabilities using the sigmoid function
-  predicted_prob <- 1 / (1 + exp(-log_odds))
-  
-  # Convert probabilities to binary predictions using the threshold
-  predicted_class <- ifelse(predicted_prob > threshold, 1, -1)
-  
-  # Ensure test_y is properly aligned
-  if (length(predicted_class) != length(test_y)) {
-    stop("Mismatch between predicted values and test_y. Check input dimensions.")
-  }
-  
-  # Calculate accuracy
-  accuracy <- mean(predicted_class == test_y)
-  
-  # Create confusion matrix
-  conf_matrix <- table(Predicted = predicted_class, Actual = test_y)
-  
-  # Precision, recall, and F1 score
-  true_positive <- ifelse("1" %in% rownames(conf_matrix) & "1" %in% colnames(conf_matrix),
-                          conf_matrix["1", "1"], 0)
-  false_positive <- ifelse("1" %in% rownames(conf_matrix) & "-1" %in% colnames(conf_matrix),
-                           conf_matrix["1", "-1"], 0)
-  false_negative <- ifelse("-1" %in% rownames(conf_matrix) & "1" %in% colnames(conf_matrix),
-                           conf_matrix["-1", "1"], 0)
-  
-  precision <- ifelse(true_positive + false_positive > 0,
-                      true_positive / (true_positive + false_positive), 0)
-  recall <- ifelse(true_positive + false_negative > 0,
-                   true_positive / (true_positive + false_negative), 0)
-  f1_score <- ifelse(precision + recall > 0,
-                     2 * (precision * recall) / (precision + recall), 0)
-  
-  # Return evaluation metrics
-  return(list(
-    accuracy = round(accuracy, 4),
-    f1_score = round(f1_score, 4),
-    confusion_matrix = conf_matrix
-  ))
-}
-
-# Evaluate on the test set
-
-results_gglasso <- evaluate_gglasso_model(
-  model = fit_gglasso,
-  test_x = X_test_scaled,
-  test_y = y_test
-)
-
-# Print results
-print(paste("Accuracy:", results_gglasso$accuracy))
-print(paste("F1 Score:", results_gglasso$f1_score))
-print("Confusion Matrix:")
-print(results_gglasso$confusion_matrix)
-
-
-
-### 5. Post-Estimation Plots -----------------------------------
-# (1) Coefficient Plot for Optimal Lambda
-
-# Extract coefficients for the optimal lambda
-lambda_optimal <- min(fit_gglasso$lambda)  # Smallest lambda
-coefficients <- coef(fit_gglasso, s = lambda_optimal)
-
-# Convert to a data frame
-coef_data <- as.data.frame(as.matrix(coefficients))
-coef_data$Variable <- rownames(coef_data)
-rownames(coef_data) <- NULL
-
-# Rename the coefficient column (default name is "s1" or similar)
-colnames(coef_data)[1] <- "Coefficient"
-
-# Filter for non-zero coefficients
-coef_data <- coef_data %>% filter(Coefficient != 0 & Variable != "(Intercept)")
-
-ggplot(coef_data, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
-  geom_bar(stat = "identity", fill = "lightblue") +
-  coord_flip() +
-  labs(title = "Group Lasso Coefficients", x = "Variable", y = "Coefficient") +
-  theme_minimal()
-
-
-# (2) Calibration Curve
-
-# Predict log-odds for the smallest lambda
-lambda_min <- min(fit_gglasso$lambda)
-
-# Find the index of the smallest lambda
-best_lambda_index <- which(fit_gglasso$lambda == lambda_min)
-log_odds <- predict(fit_gglasso, newx = X_test_scaled, type = "link")[, best_lambda_index]
-
-# Convert log-odds to probabilities using the sigmoid function
-predicted_prob <- 1 / (1 + exp(-log_odds))
-
-calibration_data <- data.frame(
-  Predicted = as.vector(predicted_prob),
-  Observed = y_test
-)
-calibration_data$Bin <- cut(calibration_data$Predicted, breaks = 10, include.lowest = TRUE)
-
-calibration_curve <- calibration_data %>%
-  group_by(Bin) %>%
-  summarize(
-    Mean_Predicted = mean(Predicted),
-    Mean_Observed = mean(Observed)
-  )
-
-ggplot(calibration_curve, aes(x = Mean_Predicted, y = Mean_Observed)) +
-  geom_point() +
-  geom_abline(slope = 1, intercept = -1, linetype = "dashed", color = "red") +
-  labs(title = "Calibration Curve (Group Lasso)", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
-  theme_minimal()
-
-# From the calibration curve we see underfiting of the model overall
-
-
-## Group Lasso with cross validation----------------
-# Set up k-fold cross-validation
-k <- 10  # Number of folds
-folds <- createFolds(y_train, k = k, list = TRUE)
-
-# Prepare storage for cross-validation results
-cv_results <- matrix(0, nrow = length(fit_gglasso$lambda), ncol = k)
-
-# Set up parallel processing
-cl <- makeCluster(detectCores() - 1)
-registerDoParallel(cl)
-
-# Perform cross-validation
-for (fold_idx in 1:k) {
-  # Split data into training and validation sets for this fold
-  val_idx <- folds[[fold_idx]]
-  X_train_cv <- X_train_scaled[-val_idx, ]
-  y_train_cv <- y_train[-val_idx]
-  X_val_cv <- X_train_scaled[val_idx, ]
-  y_val_cv <- y_train[val_idx]
-  
-  # Fit group lasso on training data
-  fit_cv <- gglasso(
-    x = X_train_cv, 
-    y = y_train_cv, 
-    group = group_vector_train, 
-    loss = "logit", 
-    nlambda = 50
-  )
-  
-  # Evaluate on validation data
-  for (lambda_idx in 1:length(fit_cv$lambda)) {
-    # Predict for this lambda
-    log_odds <- predict(fit_cv, newx = X_val_cv, type = "link")[, lambda_idx]
-    predicted_prob <- 1 / (1 + exp(-log_odds))
-    predicted_class <- ifelse(predicted_prob > 0.5, 1, -1)
-    
-    # Store validation accuracy
-    cv_results[lambda_idx, fold_idx] <- mean(predicted_class == y_val_cv)
-  }
-}
-
-# Stop parallel processing
-stopCluster(cl)
-
-# Average accuracy across folds for each lambda
-cv_mean_accuracy <- rowMeans(cv_results)
-
-# Identify the best lambda (maximum accuracy)
-best_lambda_idx <- which.max(cv_mean_accuracy)
-best_lambda <- fit_gglasso$lambda[best_lambda_idx]
-
-# Print best lambda
-cat("Best lambda:", best_lambda, "\n")
-
-# Plot lambda min and 1se
-plot(fit_gglasso)
-
-# Refit the model on the full training data with the best lambda
-final_fit <- gglasso(
+### 4. Perform Cross-Validation for Group Lasso -----------------
+set.seed(123)
+cv_fit_gglasso <- cv.gglasso(
   x = X_train_scaled, 
   y = y_train, 
   group = group_vector_train, 
   loss = "logit", 
-  lambda = best_lambda
+  nfolds = 10
 )
 
-# Evaluate the final model on the test set
-log_odds_test <- predict(final_fit, newx = X_test_scaled, type = "link")
-predicted_prob_test <- 1 / (1 + exp(-log_odds_test))
-predicted_class_test <- ifelse(predicted_prob_test > 0.5, 1, -1)
-accuracy_test <- mean(predicted_class_test == y_test)
+# Optimal lambda
+lambda_min_gl <- cv_fit_gglasso$lambda.min
+cat("Optimal lambda (min):", lambda_min_gl, "\n")
 
-cat("Test set accuracy with best lambda:", accuracy_test, "\n")
 
-### 6. Evaluate Cross-Validated Model ------------------------
 
-# Evaluate the final cross-validated model on the test set
-results_cv <- evaluate_gglasso_model(
-  model = final_fit,
-  test_x = X_test_scaled,
-  test_y = y_test
+# Optimal lambda
+lambda_min_gl <- cv_fit_gglasso$lambda.min
+lambda_1se_gl <- cv_fit_gglasso$lambda.1se
+cat("Optimal lambda (min):", lambda_min_gl, "\n")
+cat("Optimal lambda (1se):", lambda_1se_gl, "\n")
+
+# Plot Cross-Validation Results for Group Lasso
+plot(cv_fit_gglasso, main = "Cross-Validation for Group Lasso")
+abline(v = log(lambda_min_gl), col = "blue", lty = 2, lwd = 2)  # Vertical line for lambda.min
+abline(v = log(lambda_1se_gl), col = "red", lty = 2, lwd = 2)   # Vertical line for lambda.1se
+legend("topright", legend = c("lambda.min", "lambda.1se"), col = c("blue", "red"), lty = 2, lwd = 2)
+
+### 5. Fit the Final Group Lasso Model -------------------------
+group_lasso_model <- gglasso(
+  x = X_train_scaled, 
+  y = y_train, 
+  group = group_vector_train, 
+  loss = "logit", 
+  lambda = lambda_min_gl
 )
 
-# Print results
-print(paste("Accuracy (CV):", results_cv$accuracy))
-print(paste("F1 Score (CV):", results_cv$f1_score))
-print("Confusion Matrix (CV):")
-print(results_cv$confusion_matrix)
+### 6. Evaluate Group Lasso Model ------------------------------
+# Predicted probabilities
+log_odds_gl <- predict(group_lasso_model, newx = X_test_scaled, type = "link")
+predicted_prob_gl <- 1 / (1 + exp(-log_odds_gl))
 
-### 7. Post-Estimation Plots for Cross-Validated Model ------------
+# Predicted classes
+predicted_class_gl <- ifelse(predicted_prob_gl > 0.5, 1, -1)
 
-# (1) Coefficient Plot for Cross-Validated Model
-lambda_cv <- best_lambda
-coefficients_cv <- coef(final_fit, s = lambda_cv)
+# Model evaluation metrics
+evaluate_group_lasso <- function(predicted_class, predicted_prob, y_test) {
+  accuracy <- mean(predicted_class == y_test)
+  confusion <- confusionMatrix(factor(predicted_class), factor(y_test))
+  auc_value <- auc(roc(y_test, predicted_prob))
+  f1_score <- 2 * (confusion$byClass["Pos Pred Value"] * confusion$byClass["Sensitivity"]) /
+    (confusion$byClass["Pos Pred Value"] + confusion$byClass["Sensitivity"])
+  return(list(accuracy = accuracy, f1_score = f1_score, auc = auc_value))
+}
 
-# Convert to a data frame
-coef_data_cv <- as.data.frame(as.matrix(coefficients_cv))
-coef_data_cv$Variable <- rownames(coef_data_cv)
-rownames(coef_data_cv) <- NULL
 
-# Rename the coefficient column (default name is "s1" or similar)
-colnames(coef_data_cv)[1] <- "Coefficient"
+group_lasso_results <- evaluate_group_lasso(predicted_class_gl, predicted_prob_gl, y_test)
+print(group_lasso_results)
 
-# Filter for non-zero coefficients
-coef_data_cv <- coef_data_cv %>% filter(Coefficient != 0 & Variable != "(Intercept)")
+### 7. Post-Estimation Plots for Group Lasso -------------------
 
-ggplot(coef_data_cv, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
-  geom_bar(stat = "identity", fill = "lightblue") +
-  coord_flip() +
-  labs(title = "Group Lasso Coefficients (CV Model)", x = "Variable", y = "Coefficient") +
+# (1) ROC Curve and AUC
+roc_curve_gl <- roc(y_test, predicted_prob_gl)
+plot(roc_curve_gl, col = "blue", main = paste("ROC Curve (AUC =", round(group_lasso_results$auc, 2), ")"))
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+# (2) Confusion Matrix Heatmap
+conf_matrix_gl <- table(Predicted = predicted_class_gl, Actual = y_test)
+ggplot(as.data.frame(conf_matrix_gl), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  geom_text(aes(label = Freq), color = "black") +
+  labs(title = "Confusion Matrix Heatmap (Group Lasso)", x = "Actual", y = "Predicted") +
   theme_minimal()
 
-# (2) Calibration Curve for Cross-Validated Model
-y_test_binary <- ifelse(y_test == -1, 0, 1)
+# (3) Coefficient Plot
+coef_data_gl <- as.data.frame(as.matrix(coef(group_lasso_model)))
+coef_data_gl$Variable <- rownames(coef_data_gl)
+colnames(coef_data_gl) <- c("Coefficient", "Variable")
+coef_data_gl <- coef_data_gl %>% filter(Coefficient != 0 & Variable != "(Intercept)")
 
-log_odds_cv <- predict(final_fit, newx = X_test_scaled, type = "link")
-predicted_prob_cv <- 1 / (1 + exp(-log_odds_cv))
+ggplot(coef_data_gl, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
+  geom_bar(stat = "identity", fill = "lightblue") +
+  coord_flip() +
+  labs(title = "Group Lasso Coefficient Plot", x = "Variable", y = "Coefficient") +
+  theme_minimal()
 
-calibration_data_cv <- data.frame(
-  Predicted = as.vector(predicted_prob_cv),
+# (4) Calibration Curve
+calibration_data_gl <- data.frame(
+  Predicted = as.vector(predicted_prob_gl),
   Observed = y_test
 )
+calibration_data_gl$Bin <- cut(calibration_data_gl$Predicted, breaks = 10, include.lowest = TRUE)
 
-calibration_data_cv$Bin <- cut(calibration_data_cv$Predicted, breaks = 10, include.lowest = TRUE)
-calibration_curve_cv
-calibration_curve_cv <- calibration_data_cv %>%
+calibration_curve_gl <- calibration_data_gl %>%
   group_by(Bin) %>%
   summarize(
     Mean_Predicted = mean(Predicted),
     Mean_Observed = mean(Observed)
   )
 
-ggplot(calibration_curve_cv, aes(x = Mean_Predicted, y = Mean_Observed)) +
+ggplot(calibration_curve_gl, aes(x = Mean_Predicted, y = Mean_Observed)) +
   geom_point() +
-  geom_abline(slope = 1, intercept = -1, linetype = "dashed", color = "red") +
-  labs(title = "Calibration Curve (CV Model)", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
+  geom_abline(slope = 2, intercept = -1, linetype = "dashed", color = "red") +
+  labs(title = "Calibration Curve (Group Lasso)", x = "Mean Predicted Probability", y = "Mean Observed Probability") +
   theme_minimal()
 
-#FIX--------------------------------------------
-#fix calibration curve for -1,1
+
 
 ## GAM Model----------------
 # Using most relevant poly order (`s()` indicates the poly order for each predictor)
-gam_model <- gam(default_90 ~  + s(credit_limit) + s(capital_balance) + s(days_due) + gender + income_group, 
+gam_model <- gam(default_90 ~ s(age) + s(credit_limit) + s(capital_balance) + s(days_due) + gender + income_group, 
                  data = train_data, 
                  family = binomial)
 
