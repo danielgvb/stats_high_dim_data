@@ -14,6 +14,7 @@ library(gglasso)
 library(doParallel)
 library(mgcv) # for GAM
 library(sparsepca) # for sparse pca
+
 # Set Working Directory ---------------------------------
 data_path <- "C:/Users/danie/Documents/GitHub/stats_high_dim_data/data/data_syntetic_age.xlsx"
 
