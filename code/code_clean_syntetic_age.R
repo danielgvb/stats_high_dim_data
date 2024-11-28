@@ -526,7 +526,7 @@ cat("Optimal lambda:", lambda_optimal, "\n")
 ### 3. Fit the Final Model with Optimal Lambda -----------------
 lasso_model <- glmnet(x_train, y_train, family = "binomial", alpha = 1, lambda = lambda_optimal)
 
-# Step 3: Evaluate the Model with Adjusted Threshold ------------
+###  4. Evaluate the Model with Adjusted Threshold ------------
 evaluate_lasso <- function(predicted_prob, y_test, threshold = 0.3) {
   # Predicted classes with custom threshold
   predicted_class <- ifelse(predicted_prob > threshold, 1, 0)
@@ -553,19 +553,19 @@ evaluate_lasso <- function(predicted_prob, y_test, threshold = 0.3) {
   return(list(accuracy = accuracy, f1_score = f1_score, auc = auc_value, confusion = confusion))
 }
 
-# Step 4: Predicted Probabilities and Evaluation -----------------
+### 5. Predicted Probabilities and Evaluation -----------------
 predicted_prob <- predict(lasso_model, s = lambda_optimal, newx = x_test, type = "response")
 lasso_results <- evaluate_lasso(predicted_prob, y_test, threshold = 0.5)
 print(lasso_results)
 
-# Step 5: Post-Estimation Plots ----------------------------------
+### 6. Post-Estimation Plots ----------------------------------
 
-# (1) ROC Curve and AUC
+#### (1) ROC Curve and AUC---------
 roc_curve <- roc(y_test, predicted_prob)
 plot(roc_curve, col = "blue", main = paste("ROC Curve (AUC =", round(lasso_results$auc, 2), ")"))
 abline(a = 0, b = 1, lty = 2, col = "gray")
 
-# (2) Confusion Matrix Heatmap
+#### (2) Confusion Matrix Heatmap------------
 predicted_class <- ifelse(predicted_prob > 0.3, 1, 0)
 conf_matrix <- table(Predicted = predicted_class, Actual = y_test)
 ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) +
@@ -575,7 +575,7 @@ ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) 
   labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
   theme_minimal()
 
-# (3) Coefficient Plot ----------------------------------------
+#### (3) Coefficient Plot ----------------------------------------
 coef_data <- as.data.frame(as.matrix(coef(lasso_model, s = lambda_optimal)))
 coef_data$Variable <- rownames(coef_data)
 colnames(coef_data) <- c("Coefficient", "Variable")
@@ -587,7 +587,7 @@ ggplot(coef_data, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
   labs(title = "Lasso Coefficient Plot", x = "Variable", y = "Coefficient") +
   theme_minimal()
 
-# (4) Calibration Curve ---------------------------------------
+#### (4) Calibration Curve ---------------------------------------
 calibration_data <- data.frame(
   Predicted = as.vector(predicted_prob),
   Observed = y_test
