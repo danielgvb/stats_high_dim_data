@@ -129,7 +129,7 @@ data[columns_to_transform] <- lapply(data[columns_to_transform], function(col) l
 data <- data[, c(setdiff(names(data), "default_90"), "default_90")]
 
 #REMOVE AGE because of Noise--------------
-#data <- data[, !names(data) %in% c("age")]
+data <- data[, !names(data) %in% c("age")]
 
 # Train-Test Split --------------------------------------
 set.seed(123)
