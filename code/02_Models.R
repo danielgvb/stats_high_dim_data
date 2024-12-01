@@ -1384,46 +1384,7 @@ predicted_class_svm <- ifelse(predicted_prob_svm > 0.5, 1, -1)
 # Convert predicted classes to a factor (for compatibility with confusionMatrix)
 predicted_class_svm <- factor(predicted_class_svm, levels = c(-1, 1))
 y_test_factor <- factor(y_test, levels = c(-1, 1))
-
-# Evaluate model
-# Calculate confusion matrix
-library(caret)
-confusion <- confusionMatrix(predicted_class_svm, y_test_factor, positive = "1")
-
-# Calculate accuracy
-accuracy <- sum(predicted_class_svm == y_test_factor) / length(y_test)
-cat("Accuracy:", accuracy, "\n")
-
-# Extract precision and recall from the confusion matrix
-precision <- confusion$byClass["Pos Pred Value"]
-recall <- confusion$byClass["Sensitivity"]
-
-# Calculate F1 score
-if (!is.na(precision) && !is.na(recall) && (precision + recall) != 0) {
-  f1_score <- 2 * (precision * recall) / (precision + recall)
-} else {
-  f1_score <- NA
-}
-
-cat("F1 Score:", f1_score, "\n")
-
-
-
-### Post Estimation Plots---------
-#### 1. ROC, AUC---------------------
-# Predicted probabilities for the test data
-
-# True labels
-true_labels <- test_data$default_90
-
-
-# ROC Curve and AUC
-roc_curve_svm <- roc(true_labels, predicted_prob_svm)
-auc_value_svm <- auc(roc_curve_svm)
-
-# Plot ROC Curve
-plot(roc_curve_svm, col = "blue", main = paste("ROC Curve (AUC =", round(auc_value_svm, 2), ")"))
-abline(a = 0, b = 1, lty = 2, col = "gray")
+# Continue from here-------------------------------------------------------------------
 
 # Notes:
 # All models should have coeficient paths
