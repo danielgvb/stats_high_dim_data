@@ -18,7 +18,7 @@ library(doParallel)
 library(mgcv) # for GAM
 library(sparsepca) # for sparse pca
 library(e1071) # for SVM
-
+library(Metrics) # For Precission, Recall and F1 
 
 # Set Working Directory ---------------------------------
 data_path <- "../data/data.xlsx"
@@ -281,25 +281,51 @@ ggplot(chi2_results_df, aes(x = reorder(Variable, -P_value), y = P_value)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 # periodicity, wd_date_limit, civil_status, agency, city_born
 
+
 # Model Training and Evaluation ------------------------
+## Helper Functions------------------
+library(caret)
+
+# Define the function
+calculate_metrics <- function(predicted_probs, actual_labels, threshold = 0.5) {
+  # Convert probabilities to binary predictions based on the threshold
+  predicted_labels <- ifelse(predicted_probs > threshold, 1, 0)
+  
+  # Create confusion matrix
+  conf_matrix <- confusionMatrix(factor(predicted_labels), factor(actual_labels))
+  
+  # Extract components of the confusion matrix
+  cm <- conf_matrix$table
+  TP <- cm[2, 2]  # True Positives
+  FP <- cm[1, 2]  # False Positives
+  TN <- cm[1, 1]  # True Negatives
+  FN <- cm[2, 1]  # False Negatives
+  
+  # Manually calculate metrics
+  precision <- TP / (TP + FP)
+  recall <- TP / (TP + FN)
+  f1_score <- 2 * (precision * recall) / (precision + recall)
+  accuracy <- (TP + TN) / sum(cm)
+  
+  # Return results as a list
+  return(list(
+    Precision = precision,
+    Recall = recall,
+    F1 = f1_score,
+    Accuracy = accuracy
+  ))
+}
+
 
 ## Logistic Regression----------------
 logistic_model <- glm(default_90 ~ ., data = train_data, family = binomial)
-summary(logistic_model)
 
-### Evaluate Logistic Regression------------
-evaluate_model <- function(model, test_data, target_col) {
-  predicted_prob <- predict(model, newdata = test_data, type = "response")
-  predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
-  accuracy <- mean(predicted_class == test_data[[target_col]])
-  confusion <- confusionMatrix(factor(predicted_class), factor(test_data[[target_col]]))
-  f1_score <- 2 * (confusion$byClass["Pos Pred Value"] * confusion$byClass["Sensitivity"]) /
-    (confusion$byClass["Pos Pred Value"] + confusion$byClass["Sensitivity"])
-  return(list(accuracy = accuracy, f1_score = f1_score))
-}
+# Make predictions on the test data
+predicted_probs <- predict(logistic_model, newdata = test_data, type = "response")
 
-logistic_results <- evaluate_model(logistic_model, test_data, "default_90")
-print(logistic_results)
+# Get metrics:
+calculate_metrics(predicted_probs, test_data$default_90)
+
 
 # accuracy is worse than naive model
 # f1 score > 0.7 is good ?
