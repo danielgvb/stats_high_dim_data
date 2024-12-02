@@ -25,11 +25,10 @@ Pendientes:
 * Giorgia does outliers
 * Rafa fn ridge, lasso,....
 * see if we can put the diagonal down of the correl matrix
-* Delete repeated rows of ID, keeping the ones that default
-* Do a column of co-deudores YO
-* Density by city and add columns DANE YO
+* Do a column of co-deudores DONE
+* Density by city and add columns DANE DONE
 * Do ridge prior elastic net RAFA
 * Second degree - Rafa
-* Check F1 score calculation in R Models
-* Check Precission
+* Check F1 score calculation in R Models: DONE 
+* Check Precission DONE
 *
