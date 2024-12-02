@@ -31,3 +31,5 @@ Pendientes:
 * Do ridge prior elastic net RAFA
 * Second degree - Rafa
 * Check F1 score calculation in R Models
+* Check Precission
+*
