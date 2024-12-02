@@ -18,7 +18,7 @@ library(doParallel)
 library(mgcv) # for GAM
 library(sparsepca) # for sparse pca
 library(e1071) # for SVM
-library(Metrics) # For Precission, Recall and F1 
+
 
 # Set Working Directory ---------------------------------
 data_path <- "../data/data.xlsx"
@@ -36,26 +36,27 @@ colnames(data)
 # Aggregate to count distinct 'ID Cliente' by 'No Pagaré Rotativo'
 result <- aggregate(`ID Cliente` ~ `No Pagaré Rotativo`, data = data, FUN = function(x) length(unique(x)))
 
-# Rename columns for clarity (optional)
+# Rename columns of result
 colnames(result) <- c("No Pagaré Rotativo", "Distinct ID Cliente Count")
 
-# View result
+# View result max count by id
 max(result$`Distinct ID Cliente Count`)
+# so there is some credits with more than one client associated
 
-# mark if the pagare has more than one ID.
+# mark if the credit has more than one ID.
 # Compute the distinct ID Cliente count per No Pagaré Rotativo
 distinct_counts <- aggregate(`ID Cliente` ~ `No Pagaré Rotativo`, data = data, FUN = function(x) length(unique(x)))
 
-# Step 2: Add a column indicating whether the count is greater than 1
+# Add a column indicating whether the count is greater than 1
 distinct_counts$MoreThanOne <- as.numeric(distinct_counts$`ID Cliente` > 1)
 
 
-# Step 3: Merge this information back into the original dataframe
+# Merge this information back into the original dataframe
 data <- merge(data, distinct_counts[, c("No Pagaré Rotativo", "MoreThanOne")], by = "No Pagaré Rotativo", all.x = TRUE)
 colnames(data)
 
 # View the updated dataframe
-print(data)
+head(data)
 
 
 ## Remove ID Variables
@@ -101,18 +102,6 @@ data <- data[data$credit_limit > 50000, ]
 #   )) %>%
 #   select(-periodicity)
 
-## Map Education Levels to Numeric
-# If we remove this then the model does not find min lambda
-# data <- data %>%
-#   mutate(max_education = case_when(
-#     max_education == "primaria" ~ 1,
-#     max_education == "secundaria" ~ 2,
-#     max_education == "técnico" ~ 3,
-#     max_education == "tecnólogo" ~ 4,
-#     max_education == "Universitario" ~ 5,
-#     max_education == "Posgrado" ~ 6,
-#     TRUE ~ NA_real_
-#   ))
 
 
 
@@ -179,7 +168,6 @@ split <- sample.split(data$default_90, SplitRatio = 0.7)
 train_data <- subset(data, split == TRUE)
 test_data <- subset(data, split == FALSE)
 
-colnames(train_data)
 
 # Exploratory Data Analysis -----------------------------
 
@@ -263,7 +251,6 @@ for (col_name in colnames(non_numeric_data)) {
   p_values <- c(p_values, chi2_result$p.value)
 }
 
-contingency_table
 # Create a data frame for plotting
 chi2_results_df <- data.frame(
   Variable = colnames(non_numeric_data),
@@ -321,17 +308,18 @@ logistic_model <- glm(default_90 ~ ., data = train_data, family = binomial)
 # Make predictions on the test data
 predicted_probs <- predict(logistic_model, newdata = test_data, type = "response")
 
-# Get metrics:
+### Model Evaluation---------------
 logit_metrics <- calculate_metrics(predicted_probs, test_data$default_90)
 logit_metrics
 
 # accuracy is worse than naive model
-# f1 score > 0.7 is good ?
+# f1 score bad
 ### Post-Estimation Plots---------------
 par(mfrow = c(2,2))
 plot(logistic_model)
 
 
+# reset grid
 par(mfrow = c(1,1))
 #### 1. ROC Curve and AUC ------------------------------------
 # Predicted probabilities for the test data
@@ -413,24 +401,16 @@ forward_model <- step(
   trace = 0
 )
 
-# Evaluate Forward Selection Model
-forward_results <- evaluate_model(forward_model, test_data, "default_90")
-print(forward_results)
+# Make predictions on the test data
+predicted_probs_fw <- predict(forward_model, newdata = test_data, type = "response")
 
-### 2. Backward Elimination ---------------------
-# Start with the full model
-backward_model <- step(
-  full_model, 
-  direction = "backward", 
-  trace = 0
-)
+### Model Evaluation---------------
+fw_metrics <- calculate_metrics(predicted_probs_fw, test_data$default_90)
+fw_metrics
 
-# Evaluate Backward Elimination Model
-backward_results <- evaluate_model(backward_model, test_data, "default_90")
-print(backward_results)
+
 
 ### Post-Estimation Plots for Forward Model ----------------
-
 
 #### 1. ROC PR Curve and AUC for Forward Model----------
 # Predicted probabilities for the forward model
@@ -479,6 +459,20 @@ ggplot(coef_data, aes(x = reorder(Variable, Estimate), y = Estimate)) +
   labs(title = "Coefficient Plot (Forward Model)", x = "Variable", y = "Estimate") +
   theme_minimal()
 
+### 2. Backward Elimination ---------------------
+# Start with the full model
+backward_model <- step(
+  full_model, 
+  direction = "backward", 
+  trace = 0
+)
+
+# Make predictions on the test data
+predicted_probs_bw <- predict(backward_model, newdata = test_data, type = "response")
+
+### Model Evaluation---------------
+bw_metrics <- calculate_metrics(predicted_probs_bw, test_data$default_90)
+bw_metrics
 
 
 ### Post-Estimation Plots for Backward Model ----------------
@@ -544,9 +538,6 @@ y_train <- train_data$default_90
 x_test <- as.matrix(test_data[, colnames(test_data) != "default_90"])
 y_test <- test_data$default_90
 
-# scale predictors
-#x_train <- scale(x_train)
-#x_test <- scale(x_test)
 
 
 ### 2. Perform Cross-Validation for Lasso Logistic Regression --
@@ -601,44 +592,16 @@ cat("Optimal lambda:", lambda_optimal, "\n")
 ### 3. Fit the Final Model with Optimal Lambda -----------------
 lasso_model <- glmnet(x_train, y_train, family = "binomial", alpha = 1, lambda = lambda_optimal)
 
-###  4. Evaluate the Model with Adjusted Threshold ------------
-evaluate_lasso <- function(predicted_prob, y_test, threshold = 0.3) {
-  # Predicted classes with custom threshold
-  predicted_class <- ifelse(predicted_prob > threshold, 1, 0)
-  
-  # Calculate accuracy
-  accuracy <- mean(predicted_class == y_test)
-  
-  # Create confusion matrix
-  confusion <- confusionMatrix(factor(predicted_class), factor(y_test))
-  
-  # Calculate AUC
-  auc_value <- auc(roc(y_test, predicted_prob))
-  
-  # Extract precision and recall, handling NA values
-  precision <- confusion$byClass["Pos Pred Value"]
-  recall <- confusion$byClass["Sensitivity"]
-  
-  if (is.na(precision) || is.na(recall) || (precision + recall) == 0) {
-    f1_score <- NA
-  } else {
-    f1_score <- 2 * (precision * recall) / (precision + recall)
-  }
-  
-  return(list(accuracy = accuracy, f1_score = f1_score, auc = auc_value, confusion = confusion))
-}
-# This model is awful, maybe adjusting threshold can improve
-
-### 5. Predicted Probabilities and Evaluation -----------------
-predicted_prob <- predict(lasso_model, s = lambda_optimal, newx = x_test, type = "response")
-lasso_results <- evaluate_lasso(predicted_prob, y_test, threshold = 0.5)
-print(lasso_results)
+### Model Evaluation---------------
+predicted_probs_l <- predict(lasso_model, s = lambda_optimal, newx = x_test, type = "response")
+lasso_metrics <- calculate_metrics(predicted_probs_l, test_data$default_90, 0.3)
+lasso_metrics
 
 # True labels
 true_labels <- y_test
 
 #### 1. ROC Curve and AUC for Lasso Model----------
-roc_curve <- roc(true_labels, predicted_prob)
+roc_curve <- roc(true_labels, predicted_probs_l)
 auc_value <- auc(roc_curve)
 
 # Plot ROC Curve
@@ -648,8 +611,8 @@ abline(a = 0, b = 1, lty = 2, col = "gray")
 
 #### 2. Precision-Recall (PR) Curve for Lasso Model ------
 # Generate PR curve
-pr_curve <- pr.curve(scores.class0 = predicted_prob[true_labels == 1],
-                     scores.class1 = predicted_prob[true_labels == 0],
+pr_curve <- pr.curve(scores.class0 = predicted_probs_l[true_labels == 1],
+                     scores.class1 = predicted_probs_l[true_labels == 0],
                      curve = TRUE)
 
 # Plot PR Curve
@@ -659,58 +622,55 @@ plot(pr_curve, main = paste("Precision-Recall Curve (AUC =", round(pr_curve$auc.
 
 ### Fine Tune Threshold--------
 # Define a function to evaluate metrics at different thresholds
-optimize_threshold <- function(predicted_prob, true_labels, thresholds) {
-  results <- data.frame(Threshold = numeric(), Precision = numeric(), Recall = numeric(), F1_Score = numeric())
+
+# Function to find the optimal threshold
+find_optimal_threshold <- function(predicted_probs, actual_labels, thresholds) {
+  results <- data.frame(Threshold = numeric(), Precision = numeric(),
+                        Recall = numeric(), F1 = numeric(), Accuracy = numeric())
   
   for (threshold in thresholds) {
-    # Convert probabilities to predicted classes
-    predicted_class <- ifelse(predicted_prob > threshold, 1, 0)
-    
-    # Calculate confusion matrix
-    confusion <- confusionMatrix(factor(predicted_class), factor(true_labels))
-    
-    # Extract precision and recall
-    precision <- confusion$byClass["Pos Pred Value"]
-    recall <- confusion$byClass["Sensitivity"]
-    
-    # Handle NA values
-    if (is.na(precision) || is.na(recall) || (precision + recall) == 0) {
-      f1_score <- NA
-    } else {
-      # Calculate F1 score
-      f1_score <- 2 * (precision * recall) / (precision + recall)
-    }
-    
-    # Append results
-    results <- rbind(results, data.frame(Threshold = threshold, Precision = precision, Recall = recall, F1_Score = f1_score))
+    # Safeguard against confusion matrices that don't return 4 cells
+    tryCatch({
+      metrics <- calculate_metrics(predicted_probs, actual_labels, threshold)
+      results <- rbind(results, c(Threshold = threshold, metrics))
+    }, error = function(e) {})
   }
   
-  return(results)
+  # Convert results to data frame
+  results <- as.data.frame(results)
+  
+  # Filter for valid rows (non-NA F1 scores)
+  results <- results[!is.na(results$F1), ]
+  
+  # Find the threshold that maximizes F1 score
+  optimal_threshold <- results$Threshold[which.max(results$F1)]
+  
+  return(list(OptimalThreshold = optimal_threshold, Metrics = results))
 }
 
+plot_metrics <- function(metrics) {
+  # Reshape data for ggplot2
+  metrics_long <- reshape2::melt(metrics, id.vars = "Threshold",
+                                 variable.name = "Metric", value.name = "Value")
+  
+  # Plot metrics
+  ggplot(metrics_long, aes(x = Threshold, y = Value, color = Metric)) +
+    geom_line() +
+    labs(title = "Metrics Across Thresholds", x = "Threshold", y = "Value") +
+    theme_minimal()
+}
+
+
 # Define a range of thresholds to evaluate
-thresholds <- seq(0.1, 0.9, by = 0.05)
+thresholds <- seq(0, 1, by = 0.05)  # Example grid of thresholds
 
 # Optimize threshold
-threshold_results <- optimize_threshold(predicted_prob, y_test, thresholds)
-
-# Find the threshold that maximizes F1 score
-optimal_threshold <- threshold_results$Threshold[which.max(threshold_results$F1_Score)]
-cat("Optimal Threshold:", optimal_threshold, "\n")
-
-# Plot Precision, Recall, and F1 Score vs Threshold
-threshold_results_melted <- reshape2::melt(threshold_results, id.vars = "Threshold", variable.name = "Metric", value.name = "Value")
-ggplot(threshold_results_melted, aes(x = Threshold, y = Value, color = Metric)) +
-  geom_line(size = 1) +
-  theme_minimal() +
-  labs(title = "Precision, Recall, and F1 Score vs Threshold", x = "Threshold", y = "Value") +
-  scale_color_manual(values = c("blue", "red", "green"))
-
-# the results suggest that the optimal threshold is 0.3
+threshold_results <- find_optimal_threshold(predicted_probs_l, true_labels, thresholds)
+plot_metrics(threshold_results)
 
 
 #### (2) Confusion Matrix Heatmap------------
-predicted_class <- ifelse(predicted_prob > 0.3, 1, 0) # using optimal threshold
+predicted_class <- ifelse(predicted_prob > 0.15, 1, 0) # using optimal threshold
 conf_matrix <- table(Predicted = predicted_class, Actual = y_test)
 ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) +
   geom_tile() +
@@ -735,7 +695,6 @@ ggplot(coef_data, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
 ## Elastic Net Logistic Regression--------------
 
 ### 1. Prepare Data for glmnet --------------------------------
-
 ### 2. Perform Cross-Validation for Elastic Net Logistic Regression --
 # Elastic net uses `alpha` to mix lasso (alpha = 1) and ridge (alpha = 0)
 set.seed(123)
@@ -773,29 +732,23 @@ elastic_net_model <- glmnet(
 
 ### 4. Evaluate Model ------------------------------------------
 # Predicted probabilities
-predicted_prob <- predict(elastic_net_model, s = lambda_min, newx = x_test, type = "response")
+predicted_probs_en <- predict(elastic_net_model, s = lambda_min, newx = x_test, type = "response")
 
-# Predicted classes
-predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
+### Model Evaluation---------------
+en_metrics <- calculate_metrics(predicted_probs_en, test_data$default_90, 0.3)
+en_metrics
 
-# Model evaluation metrics
-evaluate_elastic_net <- function(predicted_class, predicted_prob, y_test) {
-  accuracy <- mean(predicted_class == y_test)
-  confusion <- confusionMatrix(factor(predicted_class), factor(y_test))
-  auc_value <- auc(roc(y_test, predicted_prob))
-  f1_score <- 2 * (confusion$byClass["Pos Pred Value"] * confusion$byClass["Sensitivity"]) /
-    (confusion$byClass["Pos Pred Value"] + confusion$byClass["Sensitivity"])
-  return(list(accuracy = accuracy, f1_score = f1_score, auc = auc_value))
-}
+# Optimize threshold
+# Optimize threshold
+threshold_results_en <- find_optimal_threshold(predicted_probs_en, true_labels, thresholds)
+threshold_results_en
+plot_metrics(threshold_results_en)
+# use 0.15 aswell
 
-elastic_net_results <- evaluate_elastic_net(predicted_class, predicted_prob, y_test)
-print(elastic_net_results)
-
-true_labels <- y_test
 
 ### 5. Post-Estimation Plots -----------------------------------
 #### (1) ROC Curve and AUC-------------
-roc_curve <- roc(true_labels, predicted_prob)
+roc_curve <- roc(true_labels, predicted_probs_en)
 auc_value <- auc(roc_curve)
 
 # Plot ROC Curve
@@ -805,8 +758,8 @@ abline(a = 0, b = 1, lty = 2, col = "gray")
 
 #### (2) Precision-Recall (PR) Curve -------------
 # Generate PR curve
-pr_curve <- pr.curve(scores.class0 = predicted_prob[true_labels == 1],
-                     scores.class1 = predicted_prob[true_labels == 0],
+pr_curve <- pr.curve(scores.class0 = predicted_probs_en[true_labels == 1],
+                     scores.class1 = predicted_probs_en[true_labels == 0],
                      curve = TRUE)
 
 # Plot PR Curve
@@ -815,28 +768,8 @@ plot(pr_curve, main = paste("Precision-Recall Curve (AUC =", round(pr_curve$auc.
 
 # Happens like the prior model, so adjust the threshold
 
-### Threshold fine tunning--------------
-# Define thresholds range
-thresholds <- seq(0.1, 0.9, by = 0.05)
-
-# Optimize threshold for elastic net model
-threshold_results <- optimize_threshold(predicted_prob, y_test, thresholds)
-
-# Find the threshold that maximizes F1 score
-optimal_threshold <- threshold_results$Threshold[which.max(threshold_results$F1_Score)]
-cat("Optimal Threshold:", optimal_threshold, "\n")
-
-# Plot Precision, Recall, and F1 Score vs Threshold
-threshold_results_melted <- reshape2::melt(threshold_results, id.vars = "Threshold", variable.name = "Metric", value.name = "Value")
-ggplot(threshold_results_melted, aes(x = Threshold, y = Value, color = Metric)) +
-  geom_line(size = 1) +
-  theme_minimal() +
-  labs(title = "Precision, Recall, and F1 Score vs Threshold", x = "Threshold", y = "Value") +
-  scale_color_manual(values = c("blue", "red", "green"))
-# again 0.3 as threshold optimal
-
 #### (2) Confusion Matrix Heatmap-------------
-predicted_class <- ifelse(predicted_prob > 0.3, 1, 0) # using optimal threshold
+predicted_class <- ifelse(predicted_probs_en > 0.25, 1, 0) # using optimal threshold
 conf_matrix <- table(Predicted = predicted_class, Actual = y_test)
 ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) +
   geom_tile() +
@@ -873,9 +806,10 @@ group_vector_train <- c()  # Stores group IDs
 dummy_list_train <- list()  # Stores dummy variables
 group_id <- 1
 
+
 # Numeric variables (each variable is its own group)
-group_vector_train <- c(group_vector_train, rep(group_id, ncol(numeric_data_train)))
-group_id <- group_id + 1
+group_vector_train <- c(group_vector_train, seq(group_id, length.out = ncol(numeric_data_train)))
+group_id <- max(group_vector_train) + 1
 
 # Factor variables (each factor's dummies are a group)
 for (col_name in colnames(non_numeric_data_train)) {
@@ -908,6 +842,7 @@ combined_data_train <- cbind(numeric_data_train, dummy_data_train)
 X_train <- as.matrix(combined_data_train)
 y_train <- ifelse(train_data$default_90 == 1, 1, -1)  # Convert target to {-1, 1}
 
+
 # Test Set
 test_data_no_target <- test_data[, !colnames(test_data) %in% "default_90"]
 numeric_data_test <- test_data_no_target[sapply(test_data_no_target, is.numeric)]
@@ -918,8 +853,9 @@ dummy_list_test <- list()
 group_id <- 1
 
 # Numeric variables
-group_vector_test <- c(group_vector_test, rep(group_id, ncol(numeric_data_test)))
-group_id <- group_id + 1
+group_vector_test <- c(group_vector_test, seq(group_id, length.out = ncol(numeric_data_test)))
+group_id <- max(group_vector_test) + 1
+
 
 # Factor variables
 for (col_name in colnames(non_numeric_data_test)) {
@@ -965,9 +901,13 @@ fit_gglasso <- gglasso(
 stopCluster(cl)
 
 # Plot Group Lasso Fit
+par(mfrow=c(1,1))
 plot(fit_gglasso, main = "Group Lasso Coefficients Across Lambda")
 
 ### 4. Perform Cross-Validation for Group Lasso -----------------
+cl <- makeCluster(detectCores() - 1)
+registerDoParallel(cl)
+
 set.seed(123)
 cv_fit_gglasso <- cv.gglasso(
   x = X_train_scaled, 
@@ -977,6 +917,7 @@ cv_fit_gglasso <- cv.gglasso(
   nfolds = 10
 )
 
+stopCluster(cl)
 # Optimal lambda
 lambda_min_gl <- cv_fit_gglasso$lambda.min
 cat("Optimal lambda (min):", lambda_min_gl, "\n")
@@ -995,7 +936,11 @@ abline(v = log(lambda_min_gl), col = "blue", lty = 2, lwd = 2)  # Vertical line 
 abline(v = log(lambda_1se_gl), col = "red", lty = 2, lwd = 2)   # Vertical line for lambda.1se
 legend("topright", legend = c("lambda.min", "lambda.1se"), col = c("blue", "red"), lty = 2, lwd = 2)
 
+
 ### 5. Fit the Final Group Lasso Model -------------------------
+cl <- makeCluster(detectCores() - 1)
+registerDoParallel(cl)
+
 group_lasso_model <- gglasso(
   x = X_train_scaled, 
   y = y_train, 
@@ -1003,35 +948,24 @@ group_lasso_model <- gglasso(
   loss = "logit", 
   lambda = lambda_min_gl
 )
+stopCluster(cl)
 
 ### 6. Evaluate Group Lasso Model ------------------------------
 # Predicted probabilities
 log_odds_gl <- predict(group_lasso_model, newx = X_test_scaled, type = "link")
-predicted_prob_gl <- 1 / (1 + exp(-log_odds_gl))
+log_odds_gl
+predicted_probs_gl <- 1 / (1 + exp(-log_odds_gl))
 
-# Predicted classes
-predicted_class_gl <- ifelse(predicted_prob_gl > 0.5, 1, -1)
+gl_metrics <- calculate_metrics(predicted_probs_gl, test_data$default_90)
+gl_metrics
 
-# Model evaluation metrics
-evaluate_group_lasso <- function(predicted_class, predicted_prob, y_test) {
-  accuracy <- mean(predicted_class == y_test)
-  confusion <- confusionMatrix(factor(predicted_class), factor(y_test))
-  auc_value <- auc(roc(y_test, predicted_prob))
-  f1_score <- 2 * (confusion$byClass["Pos Pred Value"] * confusion$byClass["Sensitivity"]) /
-    (confusion$byClass["Pos Pred Value"] + confusion$byClass["Sensitivity"])
-  return(list(accuracy = accuracy, f1_score = f1_score, auc = auc_value))
-}
-
-
-group_lasso_results <- evaluate_group_lasso(predicted_class_gl, predicted_prob_gl, y_test)
-print(group_lasso_results)
 
 ### 7. Post-Estimation Plots for Group Lasso -------------------
+y_test_binary <- test_data$default_90
 
-y_test_binary <- ifelse(y_test == 1, 1, 0)
 
 #### (1) ROC Curve and AUC-------------
-roc_curve_gl <- roc(y_test_binary, predicted_prob_gl)
+roc_curve_gl <- roc(y_test_binary, predicted_probs_gl)
 auc_value_gl <- auc(roc_curve_gl)
 
 # Plot ROC Curve
@@ -1041,8 +975,8 @@ abline(a = 0, b = 1, lty = 2, col = "gray")
 
 #### (2) Precision-Recall (PR) Curve -------------
 # Generate PR curve
-pr_curve_gl <- pr.curve(scores.class0 = predicted_prob_gl[y_test_binary == 1],
-                        scores.class1 = predicted_prob_gl[y_test_binary == 0],
+pr_curve_gl <- pr.curve(scores.class0 = predicted_probs_gl[y_test_binary == 1],
+                        scores.class1 = predicted_probs_gl[y_test_binary == 0],
                         curve = TRUE)
 
 # Plot PR Curve
@@ -1052,8 +986,13 @@ plot(pr_curve_gl, main = paste("Precision-Recall Curve (AUC =", round(pr_curve_g
 
 # This one is also shitty, try to fix via threshold
 
+# Optimize threshold
+threshold_results_gl <- find_optimal_threshold(predicted_probs_gl, true_labels, thresholds)
+threshold_results_gl
+plot_metrics(threshold_results_gl)
+
 #### (2) Confusion Matrix Heatmap-----------
-predicted_class_gl <- ifelse(predicted_prob_gl > 0.3, 1, -1)
+predicted_class_gl <- ifelse(predicted_probs_gl > 0.25, 1, -1)
 conf_matrix_gl <- table(Predicted = predicted_class_gl, Actual = y_test)
 ggplot(as.data.frame(conf_matrix_gl), aes(x = Actual, y = Predicted, fill = Freq)) +
   geom_tile() +
@@ -1063,18 +1002,32 @@ ggplot(as.data.frame(conf_matrix_gl), aes(x = Actual, y = Predicted, fill = Freq
   theme_minimal()
 
 #### (3) Coefficient Plot---------------
+
+# Top N coefficients Group Lasso
+# Convert coefficients to data frame and filter
 coef_data_gl <- as.data.frame(as.matrix(coef(group_lasso_model)))
 coef_data_gl$Variable <- rownames(coef_data_gl)
 colnames(coef_data_gl) <- c("Coefficient", "Variable")
-coef_data_gl <- coef_data_gl %>% filter(Coefficient != 0 & Variable != "(Intercept)")
+coef_data_gl <- coef_data_gl %>%
+  filter(Coefficient != 0 & Variable != "(Intercept)")
 
+# Select top N coefficients by absolute value
+top_n <- 25  # Adjust this number to show more/less coefficients
+coef_data_gl <- coef_data_gl %>%
+  mutate(AbsCoefficient = abs(Coefficient)) %>%
+  arrange(desc(AbsCoefficient)) %>%
+  slice(1:top_n)
+
+# Plot the top N coefficients
 ggplot(coef_data_gl, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
   geom_bar(stat = "identity", fill = "lightblue") +
   coord_flip() +
-  labs(title = "Group Lasso Coefficient Plot", x = "Variable", y = "Coefficient") +
+  labs(title = "Group Lasso Top Coefficients Plot",
+       x = "Variable", y = "Coefficient") +
   theme_minimal()
 
-
+# STOP HERE-------------------------------------------
+# from this point onwards is pending adjustments
 ## GAM Model----------------
 # Using most relevant poly order (`s()` indicates the poly order for each predictor)
 gam_model <- gam(default_90 ~ s(contributions_balance) + s(installment) + s(capital_balance) + s(credit_limit) + gender + income_group  , 
