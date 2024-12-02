@@ -1,6 +1,5 @@
 # Load Required Libraries --------------------------------
 rm(list=ls())
-
 library(readxl)
 library(dplyr)
 library(ggplot2)
@@ -29,6 +28,36 @@ data <- read_excel(data_path)
 
 # Data Preprocessing ------------------------------------
 
+
+## Co-debtor-----------
+# before removing ids, use them to check if client has co-debtor
+colnames(data)
+
+# Aggregate to count distinct 'ID Cliente' by 'No Pagaré Rotativo'
+result <- aggregate(`ID Cliente` ~ `No Pagaré Rotativo`, data = data, FUN = function(x) length(unique(x)))
+
+# Rename columns for clarity (optional)
+colnames(result) <- c("No Pagaré Rotativo", "Distinct ID Cliente Count")
+
+# View result
+max(result$`Distinct ID Cliente Count`)
+
+# mark if the pagare has more than one ID.
+# Compute the distinct ID Cliente count per No Pagaré Rotativo
+distinct_counts <- aggregate(`ID Cliente` ~ `No Pagaré Rotativo`, data = data, FUN = function(x) length(unique(x)))
+
+# Step 2: Add a column indicating whether the count is greater than 1
+distinct_counts$MoreThanOne <- as.numeric(distinct_counts$`ID Cliente` > 1)
+
+
+# Step 3: Merge this information back into the original dataframe
+data <- merge(data, distinct_counts[, c("No Pagaré Rotativo", "MoreThanOne")], by = "No Pagaré Rotativo", all.x = TRUE)
+colnames(data)
+
+# View the updated dataframe
+print(data)
+
+
 ## Remove ID Variables
 id_vars <- c("Código de Crédito", "ID Cliente", "No Pagaré Rotativo")
 data <- data[, !names(data) %in% id_vars]
@@ -43,7 +72,8 @@ friendly_names <- c("agency", "status", "rating", "work", "age", "civil_status",
                     "contributions_balance", "credit_limit", "capital_balance",
                     "capital_due30", "days_due", "date_approval",
                     "installment", "periodicity", "credit_duration", "date_limit",
-                    "dtf_approval_date", "fx_approval_date", "city_pop_2018","default_90")
+                    "dtf_approval_date", "fx_approval_date", "city_pop_2018","default_90", "has_codebtor")
+
 if (length(friendly_names) == ncol(data)) {
   colnames(data) <- friendly_names
 } else {
@@ -118,14 +148,14 @@ data[posix_columns] <- lapply(data[posix_columns], as.numeric)
 ## Convert Characters to Factors
 data[] <- lapply(data, function(x) if (is.character(x)) as.factor(x) else x)
 
-
+str(data)
 
 ## Convert all numeric to log
 # Identify numeric columns in the dataframe
 numeric_columns <- sapply(data, is.numeric)
 
 # Exclude the specified columns
-exclude_columns <- c("default_90", "dtf_apporval_date")
+exclude_columns <- c("default_90", "dtf_apporval_date", "has_codebtor")
 columns_to_transform <- setdiff(names(data)[numeric_columns], exclude_columns)
 
 ## Log transform------------
@@ -138,18 +168,22 @@ data <- data[, c(setdiff(names(data), "default_90"), "default_90")]
 #REMOVE AGE because of Noise--------------
 data <- data[, !names(data) %in% c("age")]
 
+
+
+
+
+
 # Train-Test Split --------------------------------------
 set.seed(123)
 split <- sample.split(data$default_90, SplitRatio = 0.7)
 train_data <- subset(data, split == TRUE)
 test_data <- subset(data, split == FALSE)
 
-
+colnames(train_data)
 
 # Exploratory Data Analysis -----------------------------
 
 ## Numeric Variables------------
-#numeric_data <- train_data %>% select(where(is.numeric))
 numeric_data <- train_data[sapply(train_data, is.numeric)]
 skim(numeric_data)
 ### Histograms
@@ -181,7 +215,7 @@ for (col_name in colnames(numeric_data)) {
 
 
 ### Non-Numeric Variables------------
-non_numeric_data <- train_data %>% select(where(~ !is.numeric(.)))
+non_numeric_data <- train_data[!sapply(train_data, is.numeric)]
 unique_counts <- sapply(non_numeric_data, function(x) length(unique(x)))
 mode_values <- sapply(non_numeric_data, function(x) names(which.max(table(x))))
 print(mode_values)
@@ -208,6 +242,7 @@ for (col_name in colnames(non_numeric_data)) {
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
   )
 }
+
 # All bimensual are defaulty (is just 1)
 
 ### Chi Squared------------

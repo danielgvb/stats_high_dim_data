@@ -39,7 +39,7 @@ friendly_names <- c("agency", "status", "rating", "work", "age", "civil_status",
                     "contributions_balance", "credit_limit", "capital_balance",
                     "capital_due30", "days_due", "date_approval",
                     "installment", "periodicity", "credit_duration", "date_limit",
-                    "dtf_approval_date", "fx_approval_date", "default_90")
+                    "dtf_approval_date", "fx_approval_date","city_pop_2018", "default_90")
 if (length(friendly_names) == ncol(data)) {
   colnames(data) <- friendly_names
 } else {
@@ -48,8 +48,8 @@ if (length(friendly_names) == ncol(data)) {
 
 
 ## Handle Missing Values
-na_counts <- colSums(is.na(data))
-print(na_counts)
+anyNA(data)
+
 
 # Transformations ---------------------------------------
 
@@ -115,7 +115,8 @@ test_data <- subset(data, split == FALSE)
 
 # Exploratory Data Analysis -----------------------------
 ## Numeric Variables------------
-numeric_data <- train_data %>% select(where(is.numeric))
+
+numeric_data <- train_data[sapply(train_data, is.numeric)]
 skim(numeric_data)
 ### Histograms
 for (col_name in colnames(numeric_data)) {
@@ -124,7 +125,6 @@ for (col_name in colnames(numeric_data)) {
 }
 
 ### Box Plots---------------
-
 for (col_name in colnames(numeric_data)) {
   print(
     ggplot(train_data, aes(x = factor(default_90), y = .data[[col_name]], fill = factor(default_90))) +
@@ -167,7 +167,7 @@ for (col_name in colnames(numeric_data)) {
 
 
 ### Non-Numeric Variables------------
-non_numeric_data <- train_data %>% select(where(~ !is.numeric(.)))
+non_numeric_data <- train_data[!sapply(train_data, is.numeric)]
 unique_counts <- sapply(non_numeric_data, function(x) length(unique(x)))
 mode_values <- sapply(non_numeric_data, function(x) names(which.max(table(x))))
 print(mode_values)
