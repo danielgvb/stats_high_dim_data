@@ -284,8 +284,6 @@ ggplot(chi2_results_df, aes(x = reorder(Variable, -P_value), y = P_value)) +
 
 # Model Training and Evaluation ------------------------
 ## Helper Functions------------------
-library(caret)
-
 # Define the function
 calculate_metrics <- function(predicted_probs, actual_labels, threshold = 0.5) {
   # Convert probabilities to binary predictions based on the threshold
@@ -324,8 +322,8 @@ logistic_model <- glm(default_90 ~ ., data = train_data, family = binomial)
 predicted_probs <- predict(logistic_model, newdata = test_data, type = "response")
 
 # Get metrics:
-calculate_metrics(predicted_probs, test_data$default_90)
-
+logit_metrics <- calculate_metrics(predicted_probs, test_data$default_90)
+logit_metrics
 
 # accuracy is worse than naive model
 # f1 score > 0.7 is good ?
@@ -338,7 +336,6 @@ par(mfrow = c(1,1))
 #### 1. ROC Curve and AUC ------------------------------------
 # Predicted probabilities for the test data
 predicted_prob <- predict(logistic_model, newdata = test_data, type = "response")
-
 # True labels
 true_labels <- test_data$default_90
 
