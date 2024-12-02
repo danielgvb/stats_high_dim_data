@@ -1,5 +1,6 @@
 # Load Required Libraries --------------------------------
 rm(list=ls())
+
 library(readxl)
 library(dplyr)
 library(ggplot2)
@@ -42,7 +43,7 @@ friendly_names <- c("agency", "status", "rating", "work", "age", "civil_status",
                     "contributions_balance", "credit_limit", "capital_balance",
                     "capital_due30", "days_due", "date_approval",
                     "installment", "periodicity", "credit_duration", "date_limit",
-                    "dtf_approval_date", "fx_approval_date", "default_90")
+                    "dtf_approval_date", "fx_approval_date", "city_pop_2018","default_90")
 if (length(friendly_names) == ncol(data)) {
   colnames(data) <- friendly_names
 } else {
@@ -148,7 +149,8 @@ test_data <- subset(data, split == FALSE)
 # Exploratory Data Analysis -----------------------------
 
 ## Numeric Variables------------
-numeric_data <- train_data %>% select(where(is.numeric))
+#numeric_data <- train_data %>% select(where(is.numeric))
+numeric_data <- train_data[sapply(train_data, is.numeric)]
 skim(numeric_data)
 ### Histograms
 for (col_name in colnames(numeric_data)) {
