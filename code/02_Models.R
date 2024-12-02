@@ -1026,36 +1026,22 @@ ggplot(coef_data_gl, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
        x = "Variable", y = "Coefficient") +
   theme_minimal()
 
-# STOP HERE-------------------------------------------
-# from this point onwards is pending adjustments
 ## GAM Model----------------
 # Using most relevant poly order (`s()` indicates the poly order for each predictor)
-gam_model <- gam(default_90 ~ s(contributions_balance) + s(installment) + s(capital_balance) + s(credit_limit) + gender + income_group  , 
+gam_model <- gam(default_90 ~ s(contributions_balance) + s(installment) + s(capital_balance) + s(credit_limit) + s(days_due)+ status+ wd_date_limit + gender + income_group  , 
                  data = train_data, 
                  family = binomial)
+plot(gam_model, pages = 1, rug = TRUE)
 
 # Summary of GAM Model
 summary(gam_model)
+### Model Evaluation-------------------
+predicted_probs_gam <- predict(gam_model, newdata = test_data, type = "response")
+gam_metrics <- calculate_metrics(predicted_probs_gam, test_data$default_90, 0.3)
+gam_metrics
 
-# Evaluate GAM Model 
-evaluate_gam_model <- function(model, test_data, target_col) {
-  predicted_prob <- predict(model, newdata = test_data, type = "response")
-  predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
-  accuracy <- mean(predicted_class == test_data[[target_col]])
-  confusion <- confusionMatrix(factor(predicted_class), factor(test_data[[target_col]]))
-  f1_score <- 2 * (confusion$byClass["Pos Pred Value"] * confusion$byClass["Sensitivity"]) /
-    (confusion$byClass["Pos Pred Value"] + confusion$byClass["Sensitivity"])
-  return(list(accuracy = accuracy, f1_score = f1_score))
-}
-
-gam_results <- evaluate_gam_model(gam_model, test_data, "default_90")
-print(gam_results)
 
 ### Post-Estimation Plots --------------------------------------
-
-# Predicted Probabilities
-predicted_prob_gam <- predict(gam_model, newdata = test_data, type = "response")
-
 
 # True labels
 y_test <- test_data$default_90
@@ -1063,7 +1049,7 @@ y_test <- test_data$default_90
 
 
 #### (1) ROC Curve and AUC-------------
-roc_curve_gam <- roc(y_test, predicted_prob_gam)
+roc_curve_gam <- roc(y_test, predicted_probs_gam)
 auc_value_gam <- auc(roc_curve_gam)
 
 # Plot ROC Curve
@@ -1075,8 +1061,8 @@ abline(a = 0, b = 1, lty = 2, col = "gray")
 # Generate PR curve
 
 # Filter predicted probabilities based on the true labels
-scores_class0 <- predicted_prob_gam[test_data$default_90 == 1]
-scores_class1 <- predicted_prob_gam[test_data$default_90 == 0]
+scores_class0 <- predicted_probs_gam[test_data$default_90 == 1]
+scores_class1 <- predicted_probs_gam[test_data$default_90 == 0]
 
 # Make sure the filtered vectors are numeric
 scores_class0 <- as.numeric(scores_class0)
@@ -1089,66 +1075,14 @@ plot(pr_curve, main = paste("Precision-Recall Curve (AUC =", round(pr_curve$auc.
 
 # this model sucks, lets try adjusting threshold
 ### Fine Tunning Threshold------------
-# Predicted Probabilities from GAM Model
-predicted_prob_gam <- predict(gam_model, newdata = test_data, type = "response")
-
-# True labels from test set
-y_test <- test_data$default_90
-
-# Threshold Optimization Function
-optimize_threshold <- function(predicted_prob, true_labels, thresholds) {
-  results <- data.frame(Threshold = numeric(), Precision = numeric(), Recall = numeric(), F1_Score = numeric())
-  
-  for (threshold in thresholds) {
-    # Convert probabilities to predicted classes
-    predicted_class <- ifelse(predicted_prob > threshold, 1, 0)
-    
-    # Calculate confusion matrix
-    confusion <- confusionMatrix(factor(predicted_class), factor(true_labels), positive = "1")
-    
-    # Extract precision and recall
-    precision <- confusion$byClass["Pos Pred Value"]
-    recall <- confusion$byClass["Sensitivity"]
-    
-    # Handle NA values
-    if (is.na(precision) || is.na(recall) || (precision + recall) == 0) {
-      f1_score <- NA
-    } else {
-      # Calculate F1 score
-      f1_score <- 2 * (precision * recall) / (precision + recall)
-    }
-    
-    # Append results
-    results <- rbind(results, data.frame(Threshold = threshold, Precision = precision, Recall = recall, F1_Score = f1_score))
-  }
-  
-  return(results)
-}
-
-# Define a range of thresholds to evaluate
-thresholds <- seq(0.1, 0.9, by = 0.05)
-
-# Optimize threshold
-threshold_results <- optimize_threshold(predicted_prob_gam, y_test, thresholds)
-
-# Find the threshold that maximizes F1 score
-optimal_threshold <- threshold_results$Threshold[which.max(threshold_results$F1_Score)]
-cat("Optimal Threshold:", optimal_threshold, "\n")
-
-# Plot Precision, Recall, and F1 Score vs Threshold
-
-threshold_results_melted <- reshape2::melt(threshold_results, id.vars = "Threshold", variable.name = "Metric", value.name = "Value")
-ggplot(threshold_results_melted, aes(x = Threshold, y = Value, color = Metric)) +
-  geom_line(size = 1) +
-  theme_minimal() +
-  labs(title = "Precision, Recall, and F1 Score vs Threshold", x = "Threshold", y = "Value") +
-  scale_color_manual(values = c("blue", "red", "green"))
-
+threshold_results_gam <- find_optimal_threshold(predicted_probs_gam, true_labels, thresholds)
+threshold_results_gam
+plot_metrics(threshold_results_gam)
 
 
 #### 2. Confusion Matrix Heatmap -----------------------------
 # Predicted classes
-predicted_class <- ifelse(predicted_prob > 0.25, 1, 0)
+predicted_class <- ifelse(predicted_probs_gam > 0.25, 1, 0)
 
 # Confusion matrix
 conf_matrix <- table(Predicted = predicted_class, Actual = test_data$default_90)
@@ -1161,7 +1095,8 @@ ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) 
   labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
   theme_minimal()
 
-
+# STOP HERE-------------------------------------------
+# from this point onwards is pending adjustments
 ## PCA reg--------------------
 
 ### Prepare Data for Sparse PCA ---------------------------------
