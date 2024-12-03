@@ -18,6 +18,9 @@ library(mgcv) # for GAM
 library(sparsepca) # for sparse pca
 library(e1071) # for SVM
 library(dplyr)
+library(randomForest)
+library(xgboost)
+library(Matrix)
 
 
 # Set Working Directory ---------------------------------
@@ -530,6 +533,9 @@ thresholds_logit_b
 plot_metrics(thresholds_logit_b)
 
 
+logit_metrics <- calculate_metrics(predicted_probs, test_data$default_90,0.25)
+logit_metrics
+
 #### 3. Confusion Matrix Heatmap -----------------------------
 
 # Predicted classes
@@ -773,7 +779,7 @@ lasso_model <- glmnet(x_train, y_train, family = "binomial", alpha = 1, lambda =
 
 ### Model Evaluation---------------
 predicted_probs_l <- predict(lasso_model, s = lambda_optimal, newx = x_test, type = "response")
-lasso_metrics <- calculate_metrics(predicted_probs_l, test_data$default_90, 0.3)
+lasso_metrics <- calculate_metrics(predicted_probs_l, test_data$default_90, 0.15)
 lasso_metrics
 
 # True labels
@@ -810,11 +816,13 @@ thresholds <- seq(0, 1, by = 0.05)  # Example grid of thresholds
 
 # Optimize threshold
 threshold_results <- find_optimal_threshold(predicted_probs_l, true_labels, thresholds)
+threshold_results
 plot_metrics(threshold_results)
 
 
 #### (2) Confusion Matrix Heatmap------------
 predicted_class <- ifelse(predicted_prob > 0.15, 1, 0) # using optimal threshold
+
 conf_matrix <- table(Predicted = predicted_class, Actual = y_test)
 ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) +
   geom_tile() +
@@ -835,6 +843,9 @@ ggplot(coef_data, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
   labs(title = "Lasso Coefficient Plot", x = "Variable", y = "Coefficient") +
   theme_minimal()
 
+# get lasso vars to use in GAM
+vars_lasso <- coef_data$Variable
+print(vars_lasso)
 
 ## Elastic Net Logistic Regression--------------
 
@@ -1171,17 +1182,36 @@ ggplot(coef_data_gl, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
   theme_minimal()
 
 ## GAM Model----------------
+# we can use the natural variable selection that lasso provides:
+print(vars_lasso)
+
 # Using most relevant poly order (`s()` indicates the poly order for each predictor)
-gam_model <- gam(default_90 ~ s(contributions_balance) + s(installment) + s(capital_balance) + s(credit_limit) + s(days_due)+ status+ wd_date_limit + gender + income_group  , 
+# GAM using Lasso selected vars
+gam_model <- gam(default_90 ~ agency + income_group + s(contributions_balance) +
+                   s(credit_limit)+
+                    s(date_approval) + s(credit_duration) + s(dtf_approval_date)+ 
+                    has_codebtor + m_date_limit, 
                  data = train_data, 
                  family = binomial)
+summary(gam_model)
+
+# re run model with no splines for pvalue <0.05
+gam_model <- gam(default_90 ~ agency + income_group + s(contributions_balance) +
+                   s(credit_limit)+
+                   s(date_approval) + credit_duration + dtf_approval_date+ 
+                   has_codebtor + m_date_limit, 
+                 data = train_data, 
+                 family = binomial)
+summary(gam_model)
+
+
 plot(gam_model, pages = 1, rug = TRUE)
 
 # Summary of GAM Model
 summary(gam_model)
 ### Model Evaluation-------------------
 predicted_probs_gam <- predict(gam_model, newdata = test_data, type = "response")
-gam_metrics <- calculate_metrics(predicted_probs_gam, test_data$default_90, 0.3)
+gam_metrics <- calculate_metrics(predicted_probs_gam, test_data$default_90, 0.25)
 gam_metrics
 
 
@@ -1238,6 +1268,64 @@ ggplot(as.data.frame(conf_matrix), aes(x = Actual, y = Predicted, fill = Freq)) 
   geom_text(aes(label = Freq), color = "black") +
   labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
   theme_minimal()
+
+## GAM Iterative----------------
+
+
+# Ensure the target variable is binary
+train_data$default_90 <- as.factor(train_data$default_90) # Convert target to factor if needed
+
+
+# List to store the best functions for each variable
+best_functions <- list()
+
+for (var in vars_lasso) {
+  # Get the unique value count for the variable
+  unique_values <- length(unique(train_data[[var]]))
+  
+  # Set up GAM models
+  gam_models <- list()
+  
+  if (is.numeric(train_data[[var]])) {
+    # For numeric variables, include smooth terms only if enough unique values exist
+    gam_models$linear <- gam(as.formula(paste("default_90 ~", var)), 
+                             family = binomial(link = "logit"), data = train_data)
+    
+    if (unique_values > 3) { # Minimum for a smooth term to work well
+      gam_models$smooth <- gam(as.formula(paste("default_90 ~ s(", var, ", k=", min(10, unique_values - 1), ")")), 
+                               family = binomial(link = "logit"), data = train_data)
+    }
+    if (unique_values > 3) {
+      gam_models$cubic_spline <- gam(as.formula(paste("default_90 ~ s(", var, ", bs='cs', k=", min(10, unique_values - 1), ")")), 
+                                     family = binomial(link = "logit"), data = train_data)
+    }
+  } else if (is.factor(train_data[[var]])) {
+    # For factor variables, only test a linear term
+    gam_models$linear <- gam(as.formula(paste("default_90 ~", var)), 
+                             family = binomial(link = "logit"), data = train_data)
+  } else {
+    # Skip variables that are neither numeric nor factor
+    next
+  }
+  
+  # Ensure at least one model exists to compare
+  if (length(gam_models) == 0) next
+  
+  # Compare models using AIC
+  model_aic <- sapply(gam_models, AIC)
+  best_model <- names(which.min(model_aic))
+  
+  # Store the best function and model for the variable
+  best_functions[[var]] <- list(
+    best_function = best_model,
+    model = gam_models[[best_model]]
+  )
+}
+
+# Review the best functions for each variable
+print(best_functions)
+
+
 
 # STOP HERE-------------------------------------------
 # from this point onwards is pending adjustments
@@ -1476,6 +1564,151 @@ predicted_class_svm <- ifelse(predicted_prob_svm > 0.5, 1, -1)
 # Convert predicted classes to a factor (for compatibility with confusionMatrix)
 predicted_class_svm <- factor(predicted_class_svm, levels = c(-1, 1))
 y_test_factor <- factor(y_test, levels = c(-1, 1))
+## Random Forest-------------------
+
+
+
+# Convert the target variable to factor if not already
+train_data$default_90 <- as.factor(train_data$default_90)
+test_data$default_90 <- as.factor(test_data$default_90)
+
+
+# Fit the Random Forest model
+rf_model <- randomForest(
+  default_90 ~ .,       # Formula: target ~ predictors (all other columns)
+  data = train_data,    # Training dataset
+  ntree = 500,          # Number of trees (default is 500)
+  mtry = sqrt(ncol(train_data) - 1),  # Number of variables tried at each split
+  importance = TRUE,    # Measure variable importance
+  na.action = na.omit   # Handle missing values by omitting them
+)
+
+# View model summary
+print(rf_model)
+
+# Predict on test data
+predictions <- predict(rf_model, newdata = test_data)
+
+# Confusion Matrix
+confusion_matrix <- table(Predicted = predictions, Actual = test_data$default_90)
+print(confusion_matrix)
+
+# Calculate accuracy
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Accuracy:", accuracy))
+
+# Plot variable importance
+importance(rf_model)       # Numerical importance
+varImpPlot(rf_model)       # Plot importance
+
+# Tune mtry
+tune_rf <- tuneRF(
+  train_data[, -which(names(train_data) == "default_90")], # Exclude target variable
+  train_data$default_90,
+  stepFactor = 1.5,   # Increment of mtry
+  ntreeTry = 500,     # Number of trees to try
+  improve = 0.01,     # Minimum improvement in OOB error
+  trace = TRUE
+)
+
+# tunned results
+tuned_mtry <- tune_rf[which.min(tune_rf[, 2]), 1]  # Extract mtry with minimum OOB error
+print(paste("Optimal mtry:", tuned_mtry))
+
+# tunned model
+# Re-run the Random Forest model
+rf_model_tuned <- randomForest(
+  default_90 ~ ., 
+  data = train_data, 
+  ntree = 500,        # Number of trees (can increase if needed)
+  mtry = tuned_mtry,  # Optimal mtry from tuning
+  importance = TRUE,
+  na.action = na.omit
+)
+
+# Print the tuned model summary
+print(rf_model_tuned)
+
+# Predict on test data
+predictions_tuned <- predict(rf_model_tuned, newdata = test_data)
+
+# Confusion Matrix
+confusion_matrix_tuned <- table(Predicted = predictions_tuned, Actual = test_data$default_90)
+print(confusion_matrix_tuned)
+
+# Calculate accuracy
+accuracy_tuned <- sum(diag(confusion_matrix_tuned)) / sum(confusion_matrix_tuned)
+print(paste("Tuned Model Accuracy:", accuracy_tuned))
+
+# metrics of tunned model
+# Extract elements from the confusion matrix
+TP <- confusion_matrix_tuned[2, 2]  # True Positives (default_90 = 1, Predicted = 1)
+TN <- confusion_matrix_tuned[1, 1]  # True Negatives (default_90 = 0, Predicted = 0)
+FP <- confusion_matrix_tuned[1, 2]  # False Positives (default_90 = 0, Predicted = 1)
+FN <- confusion_matrix_tuned[2, 1]  # False Negatives (default_90 = 1, Predicted = 0)
+
+# Calculate Recall
+recall <- TP / (TP + FN)
+print(paste("Recall:", recall))
+
+# Calculate Precision
+precision <- TP / (TP + FP)
+print(paste("Precision:", precision))
+
+# Calculate F1 Score
+f1_score <- 2 * (precision * recall) / (precision + recall)
+print(paste("F1 Score:", f1_score))
+
+
+## XGBoost-----------------
+
+
+### 1. Prepare data-------------
+# Ensure the target variable is a factor
+train_data$default_90 <- as.factor(train_data$default_90)
+test_data$default_90 <- as.factor(test_data$default_90)
+
+# Convert train and test datasets to numeric matrices
+train_matrix <- model.matrix(default_90 ~ . - 1, data = train_data)
+test_matrix <- model.matrix(default_90 ~ . - 1, data = test_data)
+
+# Extract the labels
+train_labels <- as.numeric(train_data$default_90) - 1  # Convert to 0/1
+test_labels <- as.numeric(test_data$default_90) - 1    # Convert to 0/1
+
+### 2. Train Model----------------
+# Define XGBoost parameters
+params <- list(
+  objective = "binary:logistic",  # Binary classification
+  eval_metric = "logloss",        # Evaluation metric
+  eta = 0.1,                      # Learning rate
+  max_depth = 6,                  # Maximum depth of trees
+  gamma = 0,                      # Minimum loss reduction
+  colsample_bytree = 0.8,         # Column subsample ratio
+  subsample = 0.8                 # Row subsample ratio
+)
+
+# Convert data to DMatrix format
+dtrain <- xgb.DMatrix(data = train_matrix, label = train_labels)
+dtest <- xgb.DMatrix(data = test_matrix, label = test_labels)
+
+# Train the XGBoost model
+xgb_model <- xgb.train(
+  params = params, 
+  data = dtrain, 
+  nrounds = 100,                  # Number of boosting rounds
+  watchlist = list(train = dtrain, test = dtest), 
+  early_stopping_rounds = 10,    # Early stopping
+  print_every_n = 10             # Print progress every 10 rounds
+)
+
+### 3. Evaluate Model-------------
+# Predict probabilities on test data
+pred_probs_xgb <- predict(xgb_model, newdata = dtest)
+xgb_metrics <- calculate_metrics(pred_probs_xgb, test_data$default_90)
+
+
+
 # Continue from here-------------------------------------------------------------------
 
 # Notes:
