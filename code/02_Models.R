@@ -1,7 +1,6 @@
 # Load Required Libraries --------------------------------
 rm(list=ls())
 library(readxl)
-library(dplyr)
 library(ggplot2)
 library(caret)
 library(glmnet)
@@ -18,6 +17,7 @@ library(doParallel)
 library(mgcv) # for GAM
 library(sparsepca) # for sparse pca
 library(e1071) # for SVM
+library(dplyr)
 
 
 # Set Working Directory ---------------------------------
@@ -80,7 +80,6 @@ if (length(friendly_names) == ncol(data)) {
 } else {
   stop("Column name mismatch.")
 }
-
 
 
 ## Handle Missing Values
@@ -269,6 +268,126 @@ ggplot(chi2_results_df, aes(x = reorder(Variable, -P_value), y = P_value)) +
 # periodicity, wd_date_limit, civil_status, agency, city_born
 
 
+# Opt binning-------------
+
+# This might help the model find better relationships
+# with categorical variables
+
+#install.packages("woeBinning")
+library(woeBinning)
+# binning <- woeBinning::woe.binning(
+#   df = train_data,
+#   target.var = "default_90", # Target variable
+#   pred.var = "agency", # Categorical feature to bin
+#   min.perc.total = 0.05, # Minimum percentage per bin
+#   min.perc.class = 0.01  # Minimum percentage of target class per bin
+# )
+# 
+# woeBinning::woe.binning.table(binning)
+# 
+# data_binned <- woeBinning::woe.binning.deploy(train_data, binning)
+# 
+# View(data_binned)
+# 
+# ggplot(data_binned, aes(x = agency.binned, fill = factor(default_90))) +
+#   geom_bar(position = "fill") +  # Stacked proportions, use "dodge" for side-by-side
+#   labs(
+#     title = paste("Bar Plot of", "agency.binned", "by Target"),
+#     x = "Agency (Binned)", 
+#     y = "Proportion", 
+#     fill = "Target"
+#   ) +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Binning for some vars
+vars_to_binn <- c('rating', 'status', 'wd_date_approval', 'm_date_approval', 'work',
+                  'max_education', 'city_born', 'agency')
+
+# Initialize a list to store binning objects for each variable
+binning_list <- list()
+
+# Iterate over the variables to create binning for each
+for (var in vars_to_binn) {
+  print(var)
+  binning_list[[var]] <- woeBinning::woe.binning(
+    df = train_data,
+    target.var = "default_90", # Target variable
+    pred.var = var,           # Current variable to bin
+    min.perc.total = 0.05,    # Minimum percentage per bin
+    min.perc.class = 0.01     # Minimum percentage of target class per bin
+  )
+}
+
+# Display binning summary for each variable
+for (var in vars_to_binn) {
+  cat("\nBinning summary for", var, ":\n")
+  print(woeBinning::woe.binning.table(binning_list[[var]]))
+}
+
+# Apply binning transformations to the dataset
+data_binned <- train_data
+for (var in vars_to_binn) {
+  data_binned <- woeBinning::woe.binning.deploy(data_binned, binning_list[[var]])
+}
+
+#View(data_binned)
+
+# See results in plots
+
+# Iterate over the binned variables and generate plots
+for (var in vars_to_binn) {
+  # Construct the binned variable name
+  binned_var <- paste0(var, ".binned")
+  
+  # Check if the binned variable exists in the data
+  if (binned_var %in% names(data_binned)) {
+    # Generate and print the plot
+    plot <- ggplot(data_binned, aes_string(x = binned_var, fill = "factor(default_90)")) +
+      geom_bar(position = "fill") +  # Stacked proportions
+      labs(
+        title = paste("Bar Plot of", binned_var, "by Target"),
+        x = var, 
+        y = "Proportion", 
+        fill = "Target"
+      ) +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    
+    # Print the plot
+    print(plot)
+  } else {
+    cat("Binned variable", binned_var, "does not exist in the data.\n")
+  }
+}
+
+# misc. level are vars that statistically insignificant so they are
+# grouped together 
+
+
+# Apply binning to test data (under training rules)
+test_data_binned <- test_data
+for (var in vars_to_binn) {
+  # Check if the binning object exists and the variable is in test_data
+  if (!is.null(binning_list[[var]]) && var %in% names(test_data)) {
+    # Apply the binning to the test data
+    test_data_binned <- woeBinning::woe.binning.deploy(test_data_binned, binning_list[[var]])
+  } else {
+    cat("Skipping variable:", var, "as it is not found in test_data or binning_list.\n")
+  }
+}
+
+# Check the binned test data
+head(test_data_binned)
+
+
+# Drop original columns from train_data and test_data
+train_data_binned <- data_binned[, !names(data_binned) %in% vars_to_binn]
+test_data_binned <- test_data_binned[, !names(test_data_binned) %in% vars_to_binn]
+
+# End Opt binning-------------------------------
+
+
 # Model Training and Evaluation ------------------------
 ## Helper Functions------------------
 # Define the function
@@ -301,23 +420,69 @@ calculate_metrics <- function(predicted_probs, actual_labels, threshold = 0.5) {
   ))
 }
 
+# Function to find the optimal threshold
+find_optimal_threshold <- function(predicted_probs, actual_labels, thresholds) {
+  results <- data.frame(Threshold = numeric(), Precision = numeric(),
+                        Recall = numeric(), F1 = numeric(), Accuracy = numeric())
+  
+  for (threshold in thresholds) {
+    # Safeguard against confusion matrices that don't return 4 cells
+    tryCatch({
+      metrics <- calculate_metrics(predicted_probs, actual_labels, threshold)
+      results <- rbind(results, c(Threshold = threshold, metrics))
+    }, error = function(e) {})
+  }
+  
+  # Convert results to data frame
+  results <- as.data.frame(results)
+  
+  # Filter for valid rows (non-NA F1 scores)
+  results <- results[!is.na(results$F1), ]
+  
+  # Find the threshold that maximizes F1 score
+  optimal_threshold <- results$Threshold[which.max(results$F1)]
+  
+  return(list(OptimalThreshold = optimal_threshold, Metrics = results))
+}
+
+plot_metrics <- function(metrics) {
+  # Reshape data for ggplot2
+  metrics_long <- reshape2::melt(metrics, id.vars = "Threshold",
+                                 variable.name = "Metric", value.name = "Value")
+  
+  # Plot metrics
+  ggplot(metrics_long, aes(x = Threshold, y = Value, color = Metric)) +
+    geom_line() +
+    labs(title = "Metrics Across Thresholds", x = "Threshold", y = "Value") +
+    theme_minimal()
+}
+
 
 ## Logistic Regression----------------
 logistic_model <- glm(default_90 ~ ., data = train_data, family = binomial)
+logistic_model_b <- glm(default_90 ~ ., data = train_data_binned, family = binomial)
 
 # Make predictions on the test data
 predicted_probs <- predict(logistic_model, newdata = test_data, type = "response")
+# now check on binned data
+predicted_probs_b <- predict(logistic_model_b, newdata = test_data_binned, type = "response")
 
 ### Model Evaluation---------------
 logit_metrics <- calculate_metrics(predicted_probs, test_data$default_90)
 logit_metrics
+# metrics on binned data
+logit_metrics_b <- calculate_metrics(predicted_probs_b, test_data_binned$default_90)
+logit_metrics_b
 
 # accuracy is worse than naive model
 # f1 score bad
+# Binning does not help in this case
+
 ### Post-Estimation Plots---------------
 par(mfrow = c(2,2))
 plot(logistic_model)
-
+plot(logistic_model_b)
+# binning helps a little with res vs leverage
 
 # reset grid
 par(mfrow = c(1,1))
@@ -350,11 +515,25 @@ plot(pr_curve, main = paste("Precision-Recall Curve (AUC =", round(pr_curve$auc.
 
 # precision drops significantly, indicating that the model- 
 #- misclassifies many observations as positive when predicting defaults.
+# Define a range of thresholds to evaluate
+thresholds <- seq(0, 1, by = 0.05)  # Example grid of thresholds
+
+
+thresholds_logit<- find_optimal_threshold(predicted_prob, true_labels, thresholds)
+thresholds_logit
+plot_metrics(thresholds_logit)
+
+
+# for binned data fine tune threshold
+thresholds_logit_b <- find_optimal_threshold(predicted_probs_b, true_labels, thresholds)
+thresholds_logit_b
+plot_metrics(thresholds_logit_b)
+
 
 #### 3. Confusion Matrix Heatmap -----------------------------
 
 # Predicted classes
-predicted_class <- ifelse(predicted_prob > 0.5, 1, 0)
+predicted_class <- ifelse(predicted_prob > 0.25, 1, 0)
 
 # Confusion matrix
 conf_matrix <- table(Predicted = predicted_class, Actual = test_data$default_90)
@@ -623,42 +802,7 @@ plot(pr_curve, main = paste("Precision-Recall Curve (AUC =", round(pr_curve$auc.
 ### Fine Tune Threshold--------
 # Define a function to evaluate metrics at different thresholds
 
-# Function to find the optimal threshold
-find_optimal_threshold <- function(predicted_probs, actual_labels, thresholds) {
-  results <- data.frame(Threshold = numeric(), Precision = numeric(),
-                        Recall = numeric(), F1 = numeric(), Accuracy = numeric())
-  
-  for (threshold in thresholds) {
-    # Safeguard against confusion matrices that don't return 4 cells
-    tryCatch({
-      metrics <- calculate_metrics(predicted_probs, actual_labels, threshold)
-      results <- rbind(results, c(Threshold = threshold, metrics))
-    }, error = function(e) {})
-  }
-  
-  # Convert results to data frame
-  results <- as.data.frame(results)
-  
-  # Filter for valid rows (non-NA F1 scores)
-  results <- results[!is.na(results$F1), ]
-  
-  # Find the threshold that maximizes F1 score
-  optimal_threshold <- results$Threshold[which.max(results$F1)]
-  
-  return(list(OptimalThreshold = optimal_threshold, Metrics = results))
-}
 
-plot_metrics <- function(metrics) {
-  # Reshape data for ggplot2
-  metrics_long <- reshape2::melt(metrics, id.vars = "Threshold",
-                                 variable.name = "Metric", value.name = "Value")
-  
-  # Plot metrics
-  ggplot(metrics_long, aes(x = Threshold, y = Value, color = Metric)) +
-    geom_line() +
-    labs(title = "Metrics Across Thresholds", x = "Threshold", y = "Value") +
-    theme_minimal()
-}
 
 
 # Define a range of thresholds to evaluate
