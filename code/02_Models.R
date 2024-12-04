@@ -1171,7 +1171,7 @@ top_n <- 25  # Adjust this number to show more/less coefficients
 coef_data_gl <- coef_data_gl %>%
   mutate(AbsCoefficient = abs(Coefficient)) %>%
   arrange(desc(AbsCoefficient)) %>%
-  slice(1:top_n)
+  filter(row_number() <= top_n)
 
 # Plot the top N coefficients
 ggplot(coef_data_gl, aes(x = reorder(Variable, Coefficient), y = Coefficient)) +
@@ -1662,7 +1662,6 @@ print(paste("F1 Score:", f1_score))
 
 ## XGBoost-----------------
 
-
 ### 1. Prepare data-------------
 # Ensure the target variable is a factor
 train_data$default_90 <- as.factor(train_data$default_90)
@@ -1702,13 +1701,78 @@ xgb_model <- xgb.train(
   print_every_n = 10             # Print progress every 10 rounds
 )
 
+
 ### 3. Evaluate Model-------------
 # Predict probabilities on test data
 pred_probs_xgb <- predict(xgb_model, newdata = dtest)
-xgb_metrics <- calculate_metrics(pred_probs_xgb, test_data$default_90)
+xgb_metrics <- calculate_metrics(pred_probs_xgb, test_data$default_90, 0.20)
+xgb_metrics
 
 
 
+### 4. Plots---------------
+
+#### Confussion Matrix
+
+threshold <- 0.20
+predicted_class <- ifelse(pred_probs_xgb > threshold, 1, 0)
+
+# Create confusion matrix
+conf_matrix <- table(Predicted = predicted_class, Actual = test_data$default_90)
+
+
+
+conf_matrix_df <- as.data.frame(as.table(conf_matrix))
+
+# Plot heatmap
+ggplot(conf_matrix_df, aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  geom_text(aes(label = Freq), color = "black") +
+  labs(
+    title = "Confusion Matrix Heatmap",
+    x = "Actual",
+    y = "Predicted"
+  ) +
+  theme_minimal()
+
+#### Coefficients-------------------
+
+##### Shap---------------
+library(SHAPforxgboost)
+library(data.table)
+
+# Convert your test dataset into a DMatrix
+dtest <- xgb.DMatrix(data = test_matrix)
+
+# Generate SHAP values for the test data
+shap_values <- shap.values(xgb_model = xgb_model, X_train = train_matrix)
+
+# Extract SHAP scores
+shap_score <- shap_values$shap_score
+
+
+# Plot a summary of SHAP values
+shap_long <- shap.prep(xgb_model = xgb_model, X_train = train_matrix)
+shap.plot.summary(shap_long) # this takes too long to render
+
+# we can save it to save time
+png("shap_summary_plot.png", width = 800, height = 600)
+shap.plot.summary(shap_long)
+dev.off()
+
+# ligther plots
+# Sample a subset of shap_long (e.g., 1000 rows)
+shap_long_sample <- shap_long[1:min(2000, nrow(shap_long)), ]
+# Plot the summary for the sampled data
+shap.plot.summary(shap_long_sample)
+
+##### Importance ---------------
+xgb.importance(feature_names = colnames(train_matrix), model = xgb_model) %>%
+  xgb.plot.importance()
+
+# sample
+xgb.importance(colnames(train_matrix), model = xgb_model)
 # Continue from here-------------------------------------------------------------------
 
 # Notes:
