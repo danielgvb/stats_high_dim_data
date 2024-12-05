@@ -1542,28 +1542,56 @@ ggplot(conf_matrix_df, aes(x = Actual, y = Predicted, fill = Freq)) +
 
 
 ## SVM---------------
-# needs scaling (done for group lasso)
-# Combine X_train_scaled and y_train to create the training dataset in data frame format
-train_data_svm <- as.data.frame(X_train_scaled)
-train_data_svm$default_90 <- factor(y_train)
 
-# Train SVM Model with Linear Kernel using Scaled Data
-svm_model <- svm(default_90 ~ ., data = train_data_svm, kernel = "linear", probability = TRUE)
+# Load required libraries
+library(e1071)
+library(caret)
+library(dplyr)
 
-# Evaluate the SVM model on scaled test set
-# Combine X_test_scaled and y_test to create the test dataset in data frame format
-test_data_svm <- as.data.frame(X_test_scaled)
-test_data_svm$default_90 <- factor(y_test)
+# Step 1: Scale the data
+# Assuming train_data and test_data are data frames with predictors and the target column is `default_90`
 
-# Predict class probabilities for the test set
-predicted_prob_svm <- attr(predict(svm_model, newdata = test_data_svm, probability = TRUE), "probabilities")[, 2]
+# Separate predictors and target variable
+X_train <- train_data %>% select(-default_90)
+Y_train <- train_data$default_90
+X_test <- test_data %>% select(-default_90)
+Y_test <- test_data$default_90
 
-# Predicted class labels using threshold of 0.5
-predicted_class_svm <- ifelse(predicted_prob_svm > 0.5, 1, -1)
+# Standardize the predictors
+scaler <- preProcess(X_train, method = c("center", "scale"))
+X_train_scaled <- predict(scaler, X_train)
+X_test_scaled <- predict(scaler, X_test)
 
-# Convert predicted classes to a factor (for compatibility with confusionMatrix)
-predicted_class_svm <- factor(predicted_class_svm, levels = c(-1, 1))
-y_test_factor <- factor(y_test, levels = c(-1, 1))
+# Step 2: Define the parameter grid
+tune_grid <- expand.grid(
+  C = c(0.1, 1, 10, 100),
+  gamma = c(0.1, 1, 10),  # Note: 'scale' and 'auto' are not directly available in e1071
+  kernel = "radial" # Corresponds to 'rbf' in Python
+)
+
+# Step 3: Set up cross-validation and train the SVM model
+train_control <- trainControl(method = "cv", number = 5, summaryFunction = f1Score, verboseIter = TRUE)
+
+svm_model <- train(
+  x = X_train_scaled,
+  y = as.factor(Y_train),
+  method = "svmRadial",
+  tuneGrid = tune_grid,
+  trControl = train_control,
+  metric = "F1"
+)
+
+# Step 4: Retrieve the best parameters and model
+best_params <- svm_model$bestTune
+best_model <- svm_model$finalModel
+
+# Step 5: Predict on the test set
+Y_pred <- predict(best_model, X_test_scaled)
+
+# Evaluate the model's performance
+confusionMatrix(Y_pred, as.factor(Y_test))
+
+
 ## Random Forest-------------------
 
 
