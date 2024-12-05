@@ -1,4 +1,5 @@
 # Load Required Libraries --------------------------------
+rm(list=ls())
 library(readxl)
 library(dplyr)
 library(ggplot2)
@@ -51,6 +52,30 @@ names(data)[constant_cols]
 data <- data[, !names(data) %in% "Clasificación Tipo Crédito"]
 
 
+# Create CO-debtor column
+# Aggregate to count distinct 'ID Cliente' by 'No Pagaré Rotativo'
+result <- aggregate(`ID Cliente` ~ `No Pagaré Rotativo`, data = data, FUN = function(x) length(unique(x)))
+
+# Rename columns of result
+colnames(result) <- c("No Pagaré Rotativo", "Distinct ID Cliente Count")
+
+# View result max count by id
+max(result$`Distinct ID Cliente Count`)
+# so there is some credits with more than one client associated
+
+# mark if the credit has more than one ID.
+# Compute the distinct ID Cliente count per No Pagaré Rotativo
+distinct_counts <- aggregate(`ID Cliente` ~ `No Pagaré Rotativo`, data = data, FUN = function(x) length(unique(x)))
+
+# Add a column indicating whether the count is greater than 1
+distinct_counts$MoreThanOne <- as.numeric(distinct_counts$`ID Cliente` > 1)
+
+
+# Merge this information back into the original dataframe
+data <- merge(data, distinct_counts[, c("No Pagaré Rotativo", "MoreThanOne")], by = "No Pagaré Rotativo", all.x = TRUE)
+colnames(data)
+
+
 ## Remove ID Variables
 id_vars <- c("Código de Crédito", "ID Cliente", "No Pagaré Rotativo")
 data <- data[, !names(data) %in% id_vars]
@@ -62,7 +87,11 @@ friendly_names <- c("agency", "status", "rating", "work", "age", "civil_status",
                     "contributions_balance", "credit_limit", "capital_balance",
                     "capital_due30", "days_due", "date_approval",
                     "installment", "periodicity", "credit_duration", "date_limit",
-                    "dtf_approval_date", "fx_approval_date", "city_pop_2018", "default_90")
+                    "dtf_approval_date", "fx_approval_date", "city_pop_2018","datacredito","default_90", "has_codebtor")
+
+
+
+
 if (length(friendly_names) == ncol(data)) {
   colnames(data) <- friendly_names
 } else {
@@ -70,7 +99,7 @@ if (length(friendly_names) == ncol(data)) {
 }
 
 
-#REMOVE AGE because of Noise--------------
+#REMOVE AGE because of data leakage--------------
 data <- data[, !names(data) %in% c("age")]
 
 ## DateTime variables-----------
@@ -192,6 +221,7 @@ ggplot(data = melted_cor_matrix, aes(x = Var1, y = Var2, fill = value)) +
   scale_y_discrete(limits = unique(melted_cor_matrix$Var2))
 
 
+
 ## Non-Numeric Variables------------
 # if it's just for EDA, we could check non-num var on the entire dataset
 # if its results influence the analysis, we should do it only on the training set (bc of data leakage risk)
@@ -221,7 +251,6 @@ for (col_name in colnames(non_numeric_data)) {
   p_values <- c(p_values, chi2_result$p.value)
 }
 
-contingency_table
 # Create a data frame for plotting
 chi2_results_df <- data.frame(
   Variable = colnames(non_numeric_data),
@@ -334,7 +363,6 @@ summary(train_data_scaled[vars_to_scale_names])
 apply(train_data_scaled[vars_to_scale_names], 2, sd)
 
 
-
 # Model Training and Evaluation (only on BALANCED data) ------------------------
 
 ### Oversampling of minority class --------------
@@ -344,12 +372,12 @@ apply(train_data_scaled[vars_to_scale_names], 2, sd)
 table(train_data_scaled$default_90)
 
 # oversampling of minority class:
-install.packages("ROSE")
 library(ROSE)
 
 train_data_balanced <- ovun.sample(default_90 ~ ., data = train_data_scaled, method = "over")$data
 table(train_data_balanced$default_90)
 
+# DANIEL: I would put until here in the main code -------------------
 
 ## Logistic Regression (Balanced Training Data) ----------------
 logistic_model_balanced <- glm(default_90 ~ ., data = train_data_balanced, family = binomial)
