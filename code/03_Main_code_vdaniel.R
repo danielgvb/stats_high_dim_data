@@ -34,7 +34,17 @@ data_path <- "../data/data.xlsx"
 # Import Data -------------------------------------------
 data <- read_excel(data_path)
 
+# Check the type of each column and count numeric and categorical
+
+numeric_columns <- sum(sapply(data, function(col) is.numeric(col) || inherits(col, "Date") || inherits(col, "POSIXct")))
+categorical_columns <- sum(sapply(data, function(col) is.factor(col) || is.character(col)))
+
+# Print the counts
+cat("Number of numeric (including date and POSIXct) columns:", numeric_columns, "\n")
+cat("Number of categorical columns:", categorical_columns, "\n")
+
 # Data Preprocessing ------------------------------------
+# Count how much numeric and how much factor
 
 
 ## Co-debtor-----------
