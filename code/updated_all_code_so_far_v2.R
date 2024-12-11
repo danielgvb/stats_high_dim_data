@@ -1404,32 +1404,29 @@ ggplot(conf_matrix_df, aes(x = Actual, y = Predicted, fill = Freq)) +
   theme_minimal()
 
 
-
 ## 9 SVM ---------------
 # Choose the data propperly
 ### 9.1 Choose the data---------------
+# Choose data created for Group Lasso
+# recall is not balanced
 
-# we use train_data_scaled and test_data_scaled
-train_data_svm <- train_data_scaled
-test_data_svm <- test_data_scaled
-
-# get only features for prediction step
-test_data_features <- test_data_svm %>% select(-default_90)
+X_train <- as.matrix(cbind(numeric_data_train_scaled, dummy_data_train))
+X_test <- as.matrix(cbind(numeric_data_test_scaled, dummy_data_test))
 
 # Adjust target variable levels to valid R names
-train_data_svm$default_90 <- factor(train_data_svm$default_90, levels = c(0, 1), labels = c("No", "Yes"))
-test_data_svm$default_90 <- factor(test_data_svm$default_90, levels = c(0, 1), labels = c("No", "Yes"))
-head(train_data_svm$default_90)
+y <- ifelse(data$default_90 == 0, "No", "Yes")  # Convert target {0,1} to {No, Yes}
+y_train = subset(y, split)
+y_test = subset(y, !split)
 
 
 ### 9.2 Train Model-----------------
 # hyperparameters grid 
 tune_grid <- expand.grid(
-   C = c(0.1, 1, 10, 100),  # Values for cost
-   sigma = c(0.01, 0.1, 1)  # Values for gamma
- )
+  C = c(0.1, 1, 10, 100),  # Values for cost
+  sigma = c(0.01, 0.1, 1)  # Values for gamma
+)
 
-# tune_grid <- expand.grid(
+#tune_grid <- expand.grid(
 #   C = c(1, 10),  # Values for cost
 #   sigma = c(0.01, 0.1)  # Values for gamma
 # )
@@ -1441,40 +1438,63 @@ on.exit(stopCluster(cl))  # Ensure cleanup
 
 
 ctrl <- trainControl(method = "cv", # choose your CV method 
-                     number = 2, # choose a bigger number once it runs / maybe 5
+                     number = 5, # choose a bigger number once it runs / maybe 5
                      summaryFunction = prSummary, # TO TUNE ON F1 SCORE
                      classProbs = T,
-                     verboseIter = T
-                     #sampling = "smote" # is good for imbalanced dataset
+                     verboseIter = T,
+                     sampling = "smote" #  for imbalanced dataset
 )
 
-svm_model <- train(default_90 ~., data = train_data_svm,
+svm_model <- train(X_train, y_train,
                    method = "svmRadial",
-                   preProcess = c("center", "scale"),
-                   #tuneLength = 10,
-                   metric = "F", # The metric used for tuning is the F1 SCORE
+                   metric  = "F",
                    trControl = ctrl,
-                   tuneGrid = tune_grid     # Hyperparameter grid
+                   tuneGrid = tune_grid
 )
 stopCluster(cl)
-#### Accuracy Model--------------
-# train_control <- trainControl(
-#   method = "cv",          # Cross-validation
-#   number = 3,             # Number of folds
-#   classProbs = TRUE,      # Compute class probabilities
-#   verboseIter = TRUE      # Show progress during training
-# )
-# cl <- makeCluster(detectCores() - 1)  # Use all but one core
-# registerDoParallel(cl)
+
+# Optimized results:
+# $Precision
+# [1] 0.6805556
 # 
-# svm_model <- train(
-#   default_90 ~ .,           # Formula
-#   data = train_data_svm, # Training data
-#   method = "svmRadial",     # Radial kernel SVM
-#   tuneGrid = tune_grid,     # Hyperparameter grid
-#   trControl = train_control # Cross-validation settings
-# )
-# stopCluster(cl)
+# $Recall
+# [1] 0.513089
+# 
+# $F1
+# [1] 0.5850746
+# 
+# $Accuracy
+# [1] 0.7971543
+
+#### Accuracy Model--------------
+ctrl <- trainControl(method = "cv", # choose your CV method
+                     number = 5, # choose a bigger number once it runs / maybe 5
+                     classProbs = T,
+                     verboseIter = T,
+                     sampling = "smote" #  for imbalanced dataset
+)
+cl <- makeCluster(detectCores() - 1)  # Use all but one core
+registerDoParallel(cl)
+svm_model <- train(X_train, y_train,
+                   method = "svmRadial",
+                   trControl = ctrl,
+                   tuneGrid = tune_grid
+)
+stopCluster(cl)
+
+# optimized results:
+# confusion matrix is the best
+# $Precision
+# [1] 0.6631944
+# 
+# $Recall
+# [1] 0.5006553
+# 
+# $F1
+# [1] 0.5705751
+# 
+# $Accuracy
+# [1] 0.7902225
 
 
 svm_model
@@ -1482,7 +1502,7 @@ svm_model
 ### 9.3 Evaluate Model-----------------
 
 # probabilities:
-svm_probs <- predict(svm_model, newdata = test_data_features, type = "prob")
+svm_probs <- predict(svm_model, newdata = X_test, type = "prob")
 head(svm_probs)
 prob_class_yes <- svm_probs$Yes
 head(prob_class_yes)
@@ -1493,7 +1513,7 @@ svm_metrics
 
 #### ROC Curve and AUC-------------------
 # Generate the ROC curve and calculate AUC
-true_labels <- test_data_svm$default_90  # Binary outcome
+true_labels <- y_test  # Binary outcome
 roc_curve_svm <- roc(true_labels, prob_class_yes)
 auc_value_svm <- auc(roc_curve_svm)
 
@@ -1516,14 +1536,15 @@ plot(pr_curve_svm, main = paste("Precision-Recall Curve (AUC =", round(pr_curve_
 #### Choose Threshold---------------------
 threshold_results_svm <- find_optimal_threshold(prob_class_yes, test_data_scaled$default_90, thresholds)
 plot_metrics(threshold_results_svm)
+threshold_results_svm
 
 # Evaluate metrics
-svm_metrics_threshold <- calculate_metrics(prob_class_yes, test_data_scaled$default_90, threshold = 0.55)
+svm_metrics_threshold <- calculate_metrics(prob_class_yes, test_data_scaled$default_90, threshold = 0.3)
 print(svm_metrics_threshold)
 
 #### Confusion Matrix Heatmap-------------------
 # Generate confusion matrix
-svm_preds <- predict(svm_model, newdata = test_data_features, type = "raw")
+svm_preds <- predict(svm_model, newdata = X_test, type = "raw")
 conf_matrix_svm <- table(Predicted = svm_preds, Actual = true_labels)
 
 # Plot confusion matrix heatmap
@@ -1533,6 +1554,7 @@ ggplot(as.data.frame(conf_matrix_svm), aes(x = Actual, y = Predicted, fill = Fre
   geom_text(aes(label = Freq), color = "black") +
   labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
   theme_minimal()
+
 
 
 ## 10 Random Forest-------------------
