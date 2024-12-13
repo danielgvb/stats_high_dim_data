@@ -1515,7 +1515,6 @@ tune_grid <- expand.grid(
 )
 
 
-#### F1 model----------
 # Register parallel backend
 cl <- makeCluster(detectCores() - 1)  # Use all but one core
 registerDoParallel(cl)
@@ -1540,55 +1539,25 @@ stopCluster(cl)
 
 
 
-#### Accuracy Model--------------
-ctrl <- trainControl(method = "cv", # choose your CV method
-                     number = 5, # choose a bigger number once it runs / maybe 5
-                     classProbs = T,
-                     verboseIter = T,
-                     sampling = "smote" #  for imbalanced dataset
-)
-cl <- makeCluster(detectCores() - 1)  # Use all but one core
-registerDoParallel(cl)
-svm_model <- train(X_train, y_train,
-                   method = "svmRadial",
-                   trControl = ctrl,
-                   tuneGrid = tune_grid
-)
-stopCluster(cl)
 
-# optimized results:
-# confusion matrix is the best
-# $Precision
-# [1] 0.6631944
-# 
-# $Recall
-# [1] 0.5006553
-# 
-# $F1
-# [1] 0.5705751
-# 
-# $Accuracy
-# [1] 0.7902225
-
-
-svm_model
-
-### 9.3 Evaluate Model-----------------
+### 8.2.3 Evaluate Model-----------------
 
 # probabilities:
-svm_probs <- predict(svm_model, newdata = X_test, type = "prob")
-head(svm_probs)
-prob_class_yes <- svm_probs$Yes
-head(prob_class_yes)
-svm_metrics <- calculate_metrics(prob_class_yes, test_data$default_90, threshold = 0.5)
+train_svm_probs <- predict(svm_model, newdata = X_train, type = "prob")
+test_svm_probs  <- predict(svm_model, newdata = X_test,  type = "prob")
+
+train_prob_class_yes <- train_svm_probs$Yes
+test_prob_class_yes  <- test_svm_probs$Yes
+
+svm_metrics <- calculate_metrics(test_prob_class_yes, test_true_labels)
 svm_metrics
 
 ### 9.4 Post Estimation Plots-------------------
 
 #### ROC Curve and AUC-------------------
 # Generate the ROC curve and calculate AUC
-true_labels <- y_test  # Binary outcome
-roc_curve_svm <- roc(true_labels, prob_class_yes)
+# true_labels <- y_test  # Binary outcome
+roc_curve_svm <- roc(test_true_labels, test_prob_class_yes)
 auc_value_svm <- auc(roc_curve_svm)
 
 # Plot ROC Curve
@@ -1598,8 +1567,8 @@ abline(a = 0, b = 1, lty = 2, col = "gray")
 
 #### Precision-Recall (PR) Curve--------------
 # Generate PR curve
-pr_curve_svm <- pr.curve(scores.class0 = prob_class_yes[true_labels == "Yes"],
-                         scores.class1 = prob_class_yes[true_labels == "No"],
+pr_curve_svm <- pr.curve(scores.class0 = test_prob_class_yes[test_true_labels == 1],
+                         scores.class1 = test_prob_class_yes[test_true_labels == 0],
                          curve = TRUE)
 
 # Plot PR Curve
@@ -1608,18 +1577,18 @@ plot(pr_curve_svm, main = paste("Precision-Recall Curve (AUC =", round(pr_curve_
 
 
 #### Choose Threshold---------------------
-threshold_results_svm <- find_optimal_threshold(prob_class_yes, test_data_scaled$default_90, thresholds)
+threshold_results_svm <- find_optimal_threshold(train_prob_class_yes, train_true_labels, thresholds)
 plot_metrics(threshold_results_svm)
 threshold_results_svm
 
 # Evaluate metrics
-svm_metrics_threshold <- calculate_metrics(prob_class_yes, test_data_scaled$default_90, threshold = 0.3)
+svm_metrics_threshold <- calculate_metrics(test_prob_class_yes, test_true_labels, threshold = threshold_results_svm$OptimalThreshold)
 print(svm_metrics_threshold)
 
 #### Confusion Matrix Heatmap-------------------
 # Generate confusion matrix
 svm_preds <- predict(svm_model, newdata = X_test, type = "raw")
-conf_matrix_svm <- table(Predicted = svm_preds, Actual = true_labels)
+conf_matrix_svm <- table(Predicted = svm_preds, Actual = test_true_labels)
 
 # Plot confusion matrix heatmap
 ggplot(as.data.frame(conf_matrix_svm), aes(x = Actual, y = Predicted, fill = Freq)) +
