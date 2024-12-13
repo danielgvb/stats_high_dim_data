@@ -1,6 +1,11 @@
 # Main Script---------------------------
 # Course: Statistical Methods for High Dimensional Data
-# Final Project
+# Final Project -- December 2024
+
+# Participants:
+# - Daniel Gutierrez
+# - Giorgia Rinaldi
+# - Rafael Hernandez
 
 # 1. Initialize program -------------------------
 ## 1.1 Load Required Libraries --------------------------------
@@ -510,7 +515,6 @@ test_data_scaled [vars_to_scale] <- predict(preproc, test_data [vars_to_scale])
 # 6. Oversampling ------------------------
 
 ## Oversampling of minority class
-# Check how much unbalanced the data are
 
 table(train_data_scaled$default_90)
 
@@ -522,6 +526,11 @@ train_data_scaled <- train_data_balanced # rename it to avoid changing many name
 # True labels
 test_true_labels  <- test_data_scaled$default_90 # for model evaluation
 train_true_labels <- train_data_scaled$default_90 # for model evaluation
+
+# Define a range of thresholds to evaluate
+thresholds <- seq(0, 1, by = 0.05)
+
+
 
 # 7. Parametric Models-------------------------------------
 
@@ -578,8 +587,6 @@ plot(pr_curve, main = paste("Precision-Recall Curve (AUC =", round(pr_curve$auc.
 # precision drops significantly, indicating that the model- 
 #- misclassifies many observations as positive when predicting defaults.
 #### Choose threshold---------------------
-# Define a range of thresholds to evaluate
-thresholds <- seq(0, 1, by = 0.05)
 thresholds_logit<- find_optimal_threshold(train_predicted_probs, train_true_labels, thresholds)
 thresholds_logit
 plot_metrics(thresholds_logit)
@@ -849,7 +856,6 @@ plot(pr_curve, main = paste("Precision-Recall Curve (AUC =", round(pr_curve$auc.
 
 # Optimize threshold
 threshold_lasso <- find_optimal_threshold(train_predicted_probs_ls, train_true_labels, thresholds)
-threshold_lasso
 plot_metrics(threshold_lasso)
 lasso_metrics <- calculate_metrics(test_predicted_probs_ls, test_true_labels, threshold_lasso$OptimalThreshold)
 lasso_metrics
@@ -1241,80 +1247,6 @@ ggplot(as.data.frame(conf_matrix_gam), aes(x = Actual, y = Predicted, fill = Fre
 
 
 
-# ## 7.7 _Super_ GAM ----------------
-# ### 7.7.1 Train Model-------------------
-# # Using most relevant poly order (`s()` indicates the poly order for each predictor)
-# # GAM using Lasso selected vars
-# sc <- gam.scope(train_data_scaled[,-ncol(train_data_scaled)], 
-#                 response = ncol(train_data_scaled), 
-#                 arg = c("df=2", "df=3", "df=4")) # response is the last column
-# 
-# g4 <- step.Gam(g3, scope = sc, trace = TRUE)
-# summary(g4)
-# 
-# ### 7.7.2 Model Evaluation-------------------
-# par(mfrow = c(2, 2))
-# plot(gam_model, pages = 1, rug = TRUE)
-# par(mfrow = c(1,1))
-# # Summary of GAM Model
-# summary(gam_model)
-# train_predicted_probs_gam <- predict(gam_model, newdata = train_data_scaled, type = "response")
-# test_predicted_probs_gam  <- predict(gam_model, newdata = test_data_scaled,  type = "response")
-# gam_metrics <- calculate_metrics(test_predicted_probs_gam, test_true_labels)
-# gam_metrics
-# 
-# ### 7.7.3 Post-Estimation Plots --------------------------------------
-# #### ROC Curve and AUC-------------
-# roc_curve_gam <- roc(test_true_labels, test_predicted_probs_gam)
-# auc_value_gam <- auc(roc_curve_gam)
-# 
-# # Plot ROC Curve
-# par(mfrow = c(1, 2))  # Set layout to show ROC and PR curves side by side
-# plot(roc_curve_gam, col = "blue", main = paste("ROC Curve (AUC =", round(auc_value_gam, 2), ")"))
-# abline(a = 0, b = 1, lty = 2, col = "gray")
-# 
-# #### Precision-Recall (PR) Curve -------------
-# 
-# # Filter predicted probabilities based on the true labels
-# scores_class0 <- test_predicted_probs_gam[test_data$default_90 == 1]
-# scores_class1 <- test_predicted_probs_gam[test_data$default_90 == 0]
-# 
-# # Make sure the filtered vectors are numeric
-# scores_class0 <- as.numeric(scores_class0)
-# scores_class1 <- as.numeric(scores_class1)
-# pr_curve <- pr.curve(scores.class0 = scores_class0,
-#                      scores.class1 = scores_class1,
-#                      curve = TRUE)
-# plot(pr_curve, main = paste("Precision-Recall Curve (AUC =", round(pr_curve$auc.integral, 2), ")"),
-#      col = "red", xlab = "Recall", ylab = "Precision")
-# 
-# 
-# ### Fine Tunning Threshold------------
-# threshold_results_gam <- find_optimal_threshold(train_predicted_probs_gam, train_true_labels, thresholds)
-# threshold_results_gam
-# plot_metrics(threshold_results_gam)
-# gam_metrics <- calculate_metrics(test_predicted_probs_gam, test_true_labels, threshold_results_gam$OptimalThreshold)
-# gam_metrics
-# 
-# #### Confusion Matrix Heatmap -----------------------------
-# # Predicted classes
-# predicted_class_gam <- ifelse(test_predicted_probs_gam > threshold_results_gam$OptimalThreshold, 1, 0)
-# 
-# # Confusion matrix
-# conf_matrix_gam <- table(Predicted = predicted_class_gam, Actual = y_test)
-# 
-# # Heatmap
-# ggplot(as.data.frame(conf_matrix_gam), aes(x = Actual, y = Predicted, fill = Freq)) +
-#   geom_tile() +
-#   scale_fill_gradient(low = "white", high = "blue") +
-#   geom_text(aes(label = Freq), color = "black") +
-#   labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
-#   theme_minimal()
-# 
-
-
-
-
 #8. Non-parametric models ------------------------
 
 ## 8.1 Sparse PCA regression--------------------
@@ -1329,11 +1261,11 @@ set.seed(123)
 
 # Center the data and check the scale parametrization-
 k <- 30  # Number of components to consider initially
-
-fit <- spca(X_train, k = k, scale = TRUE, verbose = FALSE)
+### Step 1: Initial Sparse PCA Fit --------------------------------
+fit <- spca(x_train_spca, k = k, scale = TRUE, verbose = FALSE)
+summary(fit)
 ### Calculate Cumulative Variance Explained --------------------
 explained_variance <- cumsum(fit$sdev^2) / sum(fit$sdev^2)
-
 components <- 1:length(explained_variance)
 explained_variance_df <- data.frame(Components = components, CumulativeVariance = explained_variance)
 ggplot(explained_variance_df, aes(x = Components, y = CumulativeVariance)) +
@@ -1343,13 +1275,6 @@ ggplot(explained_variance_df, aes(x = Components, y = CumulativeVariance)) +
   labs(title = "Cumulative Variance Explained by Components", x = "Number of Components", y = "Cumulative Variance")
 
 
-
-
-### Step 1: Initial Sparse PCA Fit --------------------------------
-k <- 30  # Number of components to consider
-set.seed(123)
-fit <- spca(X_train, k = k, scale = TRUE, verbose = FALSE)
-summary(fit)
 
 ### Step 2: Choose Optimal Alpha -----------------------------------
 var.sp <- NULL
@@ -1392,10 +1317,6 @@ for (j in 1:ncol(V)) {
 train_pcData <- as.data.frame(X_train %*% V)
 test_pcData  <- as.data.frame(X_test  %*% V)
 
-# Fit a linear model using the principal components as predictors
-# y_train_pca <- train_data$default_90  # Replace `default_90` with your target variable
-
-
 logistic_model_pca <- glm(train_true_labels ~ ., data = train_pcData, family = binomial)
 summary(logistic_model_pca)
 
@@ -1406,13 +1327,7 @@ summary(logistic_model_pca)
 train_predicted_prob_pca <- predict(logistic_model_pca, newdata = train_pcData, type = "response")
 test_predicted_prob_pca  <- predict(logistic_model_pca, newdata = test_pcData,  type = "response")
 
-# True labels from train data (y_train_pca)
-# y_train_pca <- train_data$default_90  # Replace with the correct target column
-
-# Evaluate Logistic Model Function
-
-
-#### 1. ROC and AUC--------------
+#### ROC and AUC--------------
 # ROC Curve and AUC for Logistic Model
 par(mfrow = c(1,2))
 roc_curve_pca <- roc(test_true_labels, test_predicted_prob_pca)
@@ -1435,41 +1350,6 @@ plot(pr_curve_pca, main = paste("Precision-Recall Curve (AUC =", round(pr_curve_
 
 par(mfrow = c(1,1))
 
-
-
-### Fine Tunning Threshold -----------------------------
-# Threshold Optimization Function
-optimize_threshold <- function(predicted_prob, true_labels, thresholds) {
-  results <- data.frame(Threshold = numeric(), Precision = numeric(), Recall = numeric(), F1_Score = numeric())
-  
-  for (threshold in thresholds) {
-    # Convert probabilities to predicted classes
-    predicted_class <- ifelse(predicted_prob > threshold, 1, 0)
-    
-    # Calculate confusion matrix
-    confusion <- confusionMatrix(factor(predicted_class), factor(true_labels), positive = "1")
-    
-    # Extract precision and recall
-    precision <- confusion$byClass["Pos Pred Value"]
-    recall <- confusion$byClass["Sensitivity"]
-    
-    # Handle NA values
-    if (is.na(precision) || is.na(recall) || (precision + recall) == 0) {
-      f1_score <- NA
-    } else {
-      # Calculate F1 score
-      f1_score <- 2 * (precision * recall) / (precision + recall)
-    }
-    
-    # Append results
-    results <- rbind(results, data.frame(Threshold = threshold, Precision = precision, Recall = recall, F1_Score = f1_score))
-  }
-  
-  return(results)
-}
-
-# Optimize threshold
-threshold_results <- optimize_threshold(predicted_prob_pca, y_train_pca, thresholds)
 
 
 #### Fine Tunning Threshold------------
@@ -1495,136 +1375,29 @@ ggplot(conf_matrix_df, aes(x = Actual, y = Predicted, fill = Freq)) +
   theme_minimal()
 
 
-## 8.2 SVM ---------------
-### 8.2.1 Choose the data---------------
-# Choose data created for Group Lasso
 
-# Adjust target variable levels to valid R names
+## 8.2 Random Forest-------------------
 
-y <- ifelse(data_gl$default_90 == 0, "No", "Yes")  # Convert target {0,1} to {-1, 1}
-y_train <- subset(y, is_train)
-y_test <- subset(y, !is_train)
-
-
-
-### 8.2.2 Train Model-----------------
-# hyperparameters grid 
-tune_grid <- expand.grid(
-  C = c(0.1, 1, 10, 100),  # Values for cost
-  sigma = c(0.01, 0.1, 1)  # Values for gamma
-)
-
-
-# Register parallel backend
-cl <- makeCluster(detectCores() - 1)  # Use all but one core
-registerDoParallel(cl)
-on.exit(stopCluster(cl))  # Ensure cleanup
-
-
-ctrl <- trainControl(method = "cv", # choose your CV method 
-                     number = 5, # choose a bigger number once it runs / maybe 5
-                     summaryFunction = prSummary, # TO TUNE ON F1 SCORE
-                     classProbs = T,
-                     verboseIter = T,
-                     # sampling = "smote" #  for imbalanced dataset
-)
-
-svm_model <- train(X_train, y_train,
-                   method = "svmRadial",
-                   metric  = "F",
-                   trControl = ctrl,
-                   tuneGrid = tune_grid
-)
-stopCluster(cl)
-
-
-
-
-### 8.2.3 Evaluate Model-----------------
-
-# probabilities:
-train_svm_probs <- predict(svm_model, newdata = X_train, type = "prob")
-test_svm_probs  <- predict(svm_model, newdata = X_test,  type = "prob")
-
-train_prob_class_yes <- train_svm_probs$Yes
-test_prob_class_yes  <- test_svm_probs$Yes
-
-svm_metrics <- calculate_metrics(test_prob_class_yes, test_true_labels)
-svm_metrics
-
-### 9.4 Post Estimation Plots-------------------
-
-#### ROC Curve and AUC-------------------
-# Generate the ROC curve and calculate AUC
-# true_labels <- y_test  # Binary outcome
-roc_curve_svm <- roc(test_true_labels, test_prob_class_yes)
-auc_value_svm <- auc(roc_curve_svm)
-
-# Plot ROC Curve
-par(mfrow = c(1, 2))  # Layout for side-by-side plots
-plot(roc_curve_svm, col = "blue", main = paste("ROC Curve (AUC =", round(auc_value_svm, 2), ")"))
-abline(a = 0, b = 1, lty = 2, col = "gray")
-
-#### Precision-Recall (PR) Curve--------------
-# Generate PR curve
-pr_curve_svm <- pr.curve(scores.class0 = test_prob_class_yes[test_true_labels == 1],
-                         scores.class1 = test_prob_class_yes[test_true_labels == 0],
-                         curve = TRUE)
-
-# Plot PR Curve
-plot(pr_curve_svm, main = paste("Precision-Recall Curve (AUC =", round(pr_curve_svm$auc.integral, 2), ")"),
-     col = "red", xlab = "Recall", ylab = "Precision")
-
-
-#### Choose Threshold---------------------
-threshold_results_svm <- find_optimal_threshold(train_prob_class_yes, train_true_labels, thresholds)
-plot_metrics(threshold_results_svm)
-threshold_results_svm
-
-# Evaluate metrics
-svm_metrics_threshold <- calculate_metrics(test_prob_class_yes, test_true_labels, threshold = threshold_results_svm$OptimalThreshold)
-print(svm_metrics_threshold)
-
-#### Confusion Matrix Heatmap-------------------
-# Generate confusion matrix
-svm_preds <- predict(svm_model, newdata = X_test, type = "raw")
-conf_matrix_svm <- table(Predicted = svm_preds, Actual = test_true_labels)
-
-# Plot confusion matrix heatmap
-ggplot(as.data.frame(conf_matrix_svm), aes(x = Actual, y = Predicted, fill = Freq)) +
-  geom_tile() +
-  scale_fill_gradient(low = "white", high = "blue") +
-  geom_text(aes(label = Freq), color = "black") +
-  labs(title = "Confusion Matrix Heatmap", x = "Actual", y = "Predicted") +
-  theme_minimal()
-
-
-
-## 10 Random Forest-------------------
-
-### 10.1 Train Model------------------
+### 8.2.1 Train Model------------------
 
 # Fit the Random Forest model
 rf_model <- randomForest(
-  default_90 ~ .,       # Formula: target ~ predictors (all other columns)
-  data = train_data_scaled,    # Training dataset
-  ntree = 500,          # Number of trees (default is 500)
-  mtry = sqrt(ncol(train_data) - 1),  # Number of variables tried at each split
-  importance = TRUE,    # Measure variable importance
-  na.action = na.omit   # Handle missing values by omitting them
+  default_90 ~ .,
+  data = train_data_scaled,
+  ntree = 500,
+  mtry = sqrt(ncol(train_data) - 1),
+  importance = TRUE,
+  na.action = na.omit
 )
 
-# View model summary
 print(rf_model)
 
-# Predict on test data
-predictions <- predict(rf_model, newdata = test_data_scaled)
+test_predictions <- predict(rf_model, newdata = test_data_scaled)
 
-# Confusion Matrix
-confusion_matrix <- table(Predicted = predictions, Actual = test_data_scaled$default_90)
+confusion_matrix <- table(Predicted = test_predictions, Actual = test_data_scaled$default_90)
 print(confusion_matrix)
 
-# Calculate accuracy
+# compute accuracy
 accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
 print(paste("Accuracy:", accuracy))
 
@@ -1642,7 +1415,6 @@ tune_rf <- tuneRF(
   trace = TRUE
 )
 
-# tunned results
 tuned_mtry <- tune_rf[which.min(tune_rf[, 2]), 1]  # Extract mtry with minimum OOB error
 print(paste("Optimal mtry:", tuned_mtry))
 
@@ -1662,23 +1434,22 @@ rf_model_tuned <- randomForest(
 print(rf_model_tuned)
 
 # Predict on test data
-predictions_tuned <- predict(rf_model_tuned, newdata = test_data_scaled)
+test_predictions_tuned <- predict(rf_model_tuned, newdata = test_data_scaled)
 
 # Confusion Matrix
-confusion_matrix_tuned <- table(Predicted = predictions_tuned, Actual = test_data_scaled$default_90)
+confusion_matrix_tuned <- table(Predicted = test_predictions_tuned, Actual = test_data_scaled$default_90)
 print(confusion_matrix_tuned)
-### 10.2 Model Evaluation------------------
-# Calculate accuracy
+
+### 8.2.2 Model Evaluation------------------
+# compute accuracy
 accuracy_tuned <- sum(diag(confusion_matrix_tuned)) / sum(confusion_matrix_tuned)
 print(paste("Tuned Model Accuracy:", accuracy_tuned))
 
 
-# metrics of tunned model
-# Extract elements from the confusion matrix
-TP <- confusion_matrix_tuned[2, 2]  # True Positives (default_90 = 1, Predicted = 1)
-TN <- confusion_matrix_tuned[1, 1]  # True Negatives (default_90 = 0, Predicted = 0)
-FP <- confusion_matrix_tuned[1, 2]  # False Positives (default_90 = 0, Predicted = 1)
-FN <- confusion_matrix_tuned[2, 1]  # False Negatives (default_90 = 1, Predicted = 0)
+TP <- confusion_matrix_tuned[2, 2]
+TN <- confusion_matrix_tuned[1, 1]
+FP <- confusion_matrix_tuned[2, 1]
+FN <- confusion_matrix_tuned[1, 2]
 
 # Calculate Recall
 recall <- TP / (TP + FN)
@@ -1692,16 +1463,14 @@ print(paste("Precision:", precision))
 f1_score <- 2 * (precision * recall) / (precision + recall)
 print(paste("F1 Score:", f1_score))
 
-### 10.3 Post Estimation Plots----------------- 
 
-## 11.- XGBoost-----------------
 
-### 11.1 Prepare data-------------
-# Ensure consistent levels for target variable
+## 8.3 XGBoost-----------------
+
+### 8.3.1 Prepare data-------------
 train_data_scaled$default_90 <- factor(train_data_scaled$default_90, levels = c(0, 1))
 test_data_scaled$default_90 <- factor(test_data_scaled$default_90, levels = c(0, 1))
 
-# Convert datasets to numeric matrices
 train_matrix <- model.matrix(default_90 ~ . - 1, data = train_data_scaled)
 test_matrix <- model.matrix(default_90 ~ . - 1, data = test_data_scaled)
 
@@ -1724,7 +1493,7 @@ dtrain <- xgb.DMatrix(data = train_matrix, label = train_labels)
 dtest <- xgb.DMatrix(data = test_matrix, label = test_labels)
 
 
-### 11.2 Train Model----------------
+### 8.3.2 Train Model----------------
 # Define XGBoost parameters
 params <- list(
   objective = "binary:logistic",  # Binary classification
@@ -1747,14 +1516,36 @@ xgb_model <- xgb.train(
 )
 
 
-### 11.3 Evaluate Model-------------
+### 8.3.3 Evaluate Model-------------
 # Predict probabilities on test data
 pred_probs_xgb <- predict(xgb_model, newdata = dtest)
-xgb_metrics <- calculate_metrics(pred_probs_xgb, test_data$default_90)
+xgb_metrics <- calculate_metrics(pred_probs_xgb, test_true_labels)
 xgb_metrics
 
 
-### 11.4 Post Estimation Plots ----
+### 8.3.4 Post Estimation Plots ----
+
+
+#### ROC Curve and AUC-------------------
+# Generate the ROC curve and calculate AUC
+roc_curve_xgb <- roc(test_true_labels, pred_probs_xgb)
+auc_value_xgb <- auc(roc_curve_xgb)
+
+# Plot ROC Curve
+par(mfrow = c(1, 2))  # Layout for side-by-side plots
+plot(roc_curve_xgb, col = "blue", main = paste("ROC Curve (AUC =", round(auc_value_xgb, 2), ")"))
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+#### Precision-Recall (PR) Curve--------------
+# Generate PR curve
+pr_curve_xgb <- pr.curve(scores.class0 = pred_probs_xgb[test_true_labels == 1],
+                         scores.class1 = pred_probs_xgb[test_true_labels == 0],
+                         curve = TRUE)
+
+# Plot PR Curve
+plot(pr_curve_xgb, main = paste("Precision-Recall Curve (AUC =", round(pr_curve_xgb$auc.integral, 2), ")"),
+     col = "red", xlab = "Recall", ylab = "Precision")
+
 
 #### Confusion Matrix ----
 
@@ -1763,9 +1554,6 @@ predicted_class <- ifelse(pred_probs_xgb > threshold, 1, 0)
 
 # Create confusion matrix
 conf_matrix <- table(Predicted = predicted_class, Actual = test_data$default_90)
-
-
-
 conf_matrix_df <- as.data.frame(as.table(conf_matrix))
 
 # Plot heatmap
@@ -1774,7 +1562,7 @@ ggplot(conf_matrix_df, aes(x = Actual, y = Predicted, fill = Freq)) +
   scale_fill_gradient(low = "white", high = "blue") +
   geom_text(aes(label = Freq), color = "black") +
   labs(
-    title = "Confusion Matrix Heatmap",
+    title = "XGBoost Confusion Matrix",
     x = "Actual",
     y = "Predicted"
   ) +
